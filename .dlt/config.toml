@@ -4,6 +4,10 @@ log_level = "INFO"
 [normalize]
 workers = 1
 
+[load]
+workers = 1
+parallelism_strategy = "sequential"
+
 [[sftp_providers.unl.routes]]
 name = "fym_policy"
 file_glob = "unl/inbound/FYM_Policy_*.csv"

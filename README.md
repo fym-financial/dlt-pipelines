@@ -152,6 +152,10 @@ controlled by explicit file routes in `.dlt/config.toml`.
 Each route maps a landed file pattern to a parser and destination table:
 
 ```toml
+[load]
+workers = 1
+parallelism_strategy = "sequential"
+
 [[sftp_providers.unl.routes]]
 name = "fym_policy"
 file_glob = "unl/inbound/FYM_Policy_*.csv"
@@ -176,6 +180,10 @@ file_glob = "unl/inbound/CommissionStatements/MC_*.csv"
 parser = "csv"
 table_name = "unl_monthly_commissions"
 ```
+
+The explicit `[load]` settings are intentional. With `dlt` 1.27.2, the load
+stage otherwise defaults to a much higher worker count and can fan out several
+parallel PostgreSQL `insert_values` jobs during one load package.
 
 Supported baseline parsers are `csv`, `jsonl`, and `parquet`.
 

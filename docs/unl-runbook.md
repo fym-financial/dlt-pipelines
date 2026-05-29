@@ -8,6 +8,10 @@ UNL SFTP -> Backblaze B2/S3 landing -> PostgreSQL raw schema -> B2/S3 Archive
 
 All commands assume secrets are injected by Infisical.
 
+Production UNL loads should keep the sequential DLT `[load]` settings from
+`.dlt/config.toml`. Without them, DLT can start many parallel PostgreSQL
+`insert_values` jobs and trigger transient connection drops.
+
 ## Expected Files
 
 The UNL SFTP account may expose files in the root directory and in a
@@ -252,6 +256,10 @@ landing prefix and can be loaded again:
 ```bash
 infisical run --env=dev -- uv run dlt-pipeline load-s3 unl
 ```
+
+If the failure was a transient PostgreSQL loader error such as
+`SSL SYSCALL error: EOF detected`, verify the deployment is using the
+sequential `[load]` settings before retrying.
 
 If `load-s3 unl --no-archive` was used, archive files after confirming the load:
 
