@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "toolbox-postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@toolbox-sdk/server",
+        "--prebuilt=postgres",
+        "--stdio"
+      ],
+      "env": {
+        "POSTGRES_HOST": "localhost",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DATABASE": "dlt_data",
+        "POSTGRES_USER": "loader",
+        "POSTGRES_PASSWORD": "loader"
+      }
+    }
+  }
+}

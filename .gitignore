@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local DLT runtime state and credentials
+.dlt/secrets.toml
+.dlt/pipelines/
+
+# Local env files
+.env

@@ -1,0 +1,23 @@
+[project]
+name = "dlt-pipelines"
+version = "0.1.0"
+description = "DLT ETL pipelines for loading source data into PostgreSQL."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "dlt[postgres,s3,sftp]>=1.27.2",
+    "fsspec>=2024.0.0",
+    "pandas>=3.0.3",
+]
+
+[project.scripts]
+dlt-pipeline = "dlt_pipelines.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,29 @@
+[runtime]
+log_level = "INFO"
+
+[normalize]
+workers = 1
+
+[[sftp_providers.unl.routes]]
+name = "fym_policy"
+file_glob = "unl/inbound/FYM_Policy_*.csv"
+parser = "csv"
+table_name = "unl_fym_policy"
+
+[[sftp_providers.unl.routes]]
+name = "life_professionals_policy"
+file_glob = "unl/inbound/LifeProfessionals_Policy_*.csv"
+parser = "csv"
+table_name = "unl_life_professionals_policy"
+
+[[sftp_providers.unl.routes]]
+name = "weekly_commissions"
+file_glob = "unl/inbound/CommissionStatements/WC_*.csv"
+parser = "csv"
+table_name = "unl_weekly_commissions"
+
+[[sftp_providers.unl.routes]]
+name = "monthly_commissions"
+file_glob = "unl/inbound/CommissionStatements/MC_*.csv"
+parser = "csv"
+table_name = "unl_monthly_commissions"

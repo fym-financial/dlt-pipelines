@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:18.4
+    environment:
+      POSTGRES_DB: dlt_data
+      POSTGRES_USER: loader
+      POSTGRES_PASSWORD: loader
+    ports:
+      - "5432:5432"
+    volumes:
+      - dlt_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loader -d dlt_data"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  dlt_data:
