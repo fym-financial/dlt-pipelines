@@ -1,4 +1,9 @@
-from dlt_pipelines.db import FileAuditEvent, check_postgres_connection, record_file_events
+from dlt_pipelines.db import (
+    FileAuditEvent,
+    check_postgres_connection,
+    record_file_events,
+    refresh_typed_dataset,
+)
 from dlt_pipelines.sources.files import csv_customers
 from dlt_pipelines.sources import s3
 from dlt_pipelines.sources.s3 import FileRoute, _routes_for_provider, _routes_with_matches
@@ -325,6 +330,64 @@ def test_record_file_events_upserts_audit_rows(monkeypatch) -> None:
         "moved_to_landing",
         None,
     )
+
+
+def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
+    calls = {"execute": []}
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, query: str) -> None:
+            calls["execute"].append(query)
+
+        def fetchone(self) -> tuple[int]:
+            return (42,)
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            calls["commit"] = True
+
+        def rollback(self) -> None:
+            calls["rollback"] = True
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+
+    result = refresh_typed_dataset("unl")
+
+    assert result.provider == "unl"
+    assert result.schema_name == "typed"
+    assert result.table_name == "unl_fym_policy"
+    assert result.row_count == 42
+    assert calls["commit"] is True
+    assert calls["closed"] is True
+    assert any(query.startswith("CREATE SCHEMA IF NOT EXISTS typed") for query in calls["execute"])
+    assert any(query.startswith("TRUNCATE TABLE typed.unl_fym_policy") for query in calls["execute"])
+    assert any(query.startswith("INSERT INTO typed.unl_fym_policy") for query in calls["execute"])
+    assert any(
+        query.startswith("CREATE OR REPLACE VIEW typed.unl_fym_policy_latest_load")
+        for query in calls["execute"]
+    )
+    assert calls["execute"][-1] == "SELECT count(*) FROM typed.unl_fym_policy"
+
+
+def test_refresh_typed_dataset_rejects_unsupported_provider() -> None:
+    try:
+        refresh_typed_dataset("acme")
+    except RuntimeError as exc:
+        assert "not configured" in str(exc)
+    else:
+        raise AssertionError("Expected refresh_typed_dataset to reject unsupported provider")
 
 
 def test_move_sftp_files_deletes_source_after_verified_copy(monkeypatch) -> None:

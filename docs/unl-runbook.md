@@ -186,8 +186,9 @@ Expected outcome:
 1. DLT loads matching landed files into PostgreSQL.
 2. DLT prints load package information.
 3. `loaded_to_postgres` audit rows are recorded.
-4. After a successful load, files are moved into `Archive` subdirectories.
-5. `archived` audit rows are recorded.
+4. `typed.unl_fym_policy` is refreshed from `raw.unl_fym_policy`.
+5. After a successful load, files are moved into `Archive` subdirectories.
+6. `archived` audit rows are recorded.
 
 Archive paths are created beside each file's current directory:
 
@@ -203,6 +204,18 @@ To load without archiving:
 
 ```bash
 infisical run --env=dev -- uv run dlt-pipeline load-s3 unl --no-archive
+```
+
+To load without refreshing the typed table:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline load-s3 unl --no-refresh-typed
+```
+
+To refresh the typed table from the latest raw data without running a new load:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline refresh-typed unl
 ```
 
 ## 7. Archive Only
@@ -242,8 +255,15 @@ Expected outcome:
 1. Matching SFTP files are moved into B2/S3.
 2. SFTP source files are deleted only after B2/S3 target size verification.
 3. Landed files are routed and loaded into PostgreSQL.
-4. Successfully loaded files are moved into Archive subdirectories.
-5. Audit rows are recorded for move, load, and archive stages.
+4. `typed.unl_fym_policy` is refreshed from `raw.unl_fym_policy`.
+5. Successfully loaded files are moved into Archive subdirectories.
+6. Audit rows are recorded for move, load, and archive stages.
+
+To run the full flow without refreshing the typed table:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline run-sftp-flow unl --no-refresh-typed
+```
 
 Use the full flow only after the connectivity, SFTP inspection, dry run, and
 one-file move test pass.

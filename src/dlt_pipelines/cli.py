@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import argparse
 
-from dlt_pipelines.db import FileAuditEvent, check_postgres_connection, record_file_events
+from dlt_pipelines.db import (
+    FileAuditEvent,
+    check_postgres_connection,
+    record_file_events,
+    refresh_typed_dataset,
+)
 from dlt_pipelines.pipelines.load import SOURCE_CHOICES, run_pipeline
 from dlt_pipelines.transfers import (
     archive_landed_files,
@@ -102,6 +107,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not move landed files into Archive after a successful load.",
     )
+    load_s3_parser.add_argument(
+        "--no-refresh-typed",
+        action="store_true",
+        help="Skip refreshing the provider's typed PostgreSQL tables after a successful raw load.",
+    )
 
     archive_parser = subparsers.add_parser(
         "archive-s3",
@@ -129,6 +139,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="dlt_pipelines",
         help="DLT pipeline state name.",
     )
+    flow_parser.add_argument(
+        "--no-refresh-typed",
+        action="store_true",
+        help="Skip refreshing the provider's typed PostgreSQL tables after a successful raw load.",
+    )
+
+    refresh_typed_parser = subparsers.add_parser(
+        "refresh-typed",
+        help="Refresh provider-specific typed PostgreSQL tables from raw data.",
+    )
+    refresh_typed_parser.add_argument("provider", help="Provider key, such as unl.")
 
     subparsers.add_parser(
         "check-db",
@@ -179,6 +200,8 @@ def main() -> None:
         )
         print(load_info)
         _record_loaded_files(args.provider, plan_landed_files_archive(args.provider))
+        if not args.no_refresh_typed:
+            _refresh_typed_and_print(args.provider)
         if not args.no_archive:
             archived = archive_landed_files(args.provider, progress=_print_progress)
             _record_archived_files(args.provider, archived)
@@ -212,9 +235,15 @@ def main() -> None:
         )
         print(load_info)
         _record_loaded_files(args.provider, plan_landed_files_archive(args.provider))
+        if not args.no_refresh_typed:
+            _refresh_typed_and_print(args.provider)
         archived = archive_landed_files(args.provider, progress=_print_progress)
         _record_archived_files(args.provider, archived)
         print(f"Archived {len(archived)} landed file(s).")
+        return
+
+    if args.command == "refresh-typed":
+        _refresh_typed_and_print(args.provider)
         return
 
     if args.command == "check-db":
@@ -247,6 +276,14 @@ def main() -> None:
 
 def _print_progress(message: str) -> None:
     print(message, flush=True)
+
+
+def _refresh_typed_and_print(provider: str) -> None:
+    result = refresh_typed_dataset(provider)
+    print(
+        f"Refreshed {result.schema_name}.{result.table_name} for provider "
+        f"{result.provider} with {result.row_count} row(s)."
+    )
 
 
 def _record_copied_files(provider: str, copied_paths: list[str]) -> None:

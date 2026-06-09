@@ -63,6 +63,12 @@ Run both stages together:
 infisical run --env=dev -- uv run dlt-pipeline run-sftp-flow unl
 ```
 
+This now also refreshes the typed PostgreSQL table by default. To skip that refresh:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline run-sftp-flow unl --no-refresh-typed
+```
+
 Copy files from SFTP to B2/S3 without deleting SFTP sources:
 
 ```bash
@@ -97,6 +103,18 @@ Run only the S3-to-Postgres load step:
 
 ```bash
 infisical run --env=dev -- uv run dlt-pipeline load-s3 unl
+```
+
+This also refreshes the typed PostgreSQL table by default. To skip that refresh:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline load-s3 unl --no-refresh-typed
+```
+
+Refresh the typed PostgreSQL table from `raw` without running a new file load:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline refresh-typed unl
 ```
 
 After a successful `load-s3`, matching landed files are moved into an `Archive`
