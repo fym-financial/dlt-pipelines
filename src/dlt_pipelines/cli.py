@@ -227,6 +227,9 @@ def main() -> None:
         moved = move_sftp_files_to_s3(args.provider, progress=_print_progress)
         _record_moved_files(args.provider, moved)
         print(f"Moved {len(moved)} file(s) to S3.")
+        if not moved:
+            print(f"No files moved for provider {args.provider}; skipping S3 load.")
+            return
         load_info = run_pipeline(
             source_name="s3",
             provider=args.provider,

@@ -77,3 +77,28 @@ def test_load_s3_no_refresh_typed_flag_skips_refresh(monkeypatch, capsys) -> Non
     captured = capsys.readouterr()
     assert calls["refreshed"] is False
     assert "loaded" in captured.out
+
+
+def test_run_sftp_flow_exits_cleanly_when_no_files_moved(monkeypatch, capsys) -> None:
+    calls = {"loaded": False}
+
+    monkeypatch.setattr(cli, "move_sftp_files_to_s3", lambda provider, progress=None: [])
+    monkeypatch.setattr(cli, "_record_moved_files", lambda provider, moved: None)
+
+    def fail_load(**kwargs):
+        calls["loaded"] = True
+        raise AssertionError("run_pipeline should not have been called")
+
+    monkeypatch.setattr(cli, "run_pipeline", fail_load)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dlt-pipeline", "run-sftp-flow", "unl"],
+    )
+
+    cli.main()
+
+    captured = capsys.readouterr()
+    assert calls["loaded"] is False
+    assert "Moved 0 file(s) to S3." in captured.out
+    assert "No files moved for provider unl; skipping S3 load." in captured.out
