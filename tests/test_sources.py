@@ -29,7 +29,15 @@ def test_unl_routes_are_configured() -> None:
             file_glob="unl/inbound/FYM_Policy_*.csv",
             parser="csv",
             table_name="unl_fym_policy",
-            parser_options={},
+            parser_options={
+                "dtype": {
+                    "zip": "string",
+                    "issue_date": "string",
+                    "app_recvd_date": "string",
+                    "paid_to_date": "string",
+                    "billing_mode": "string",
+                }
+            },
         ),
         FileRoute(
             name="life_professionals_policy",
@@ -79,7 +87,15 @@ def test_routes_with_matches_skips_empty_patterns(monkeypatch) -> None:
             file_glob="unl/inbound/FYM_Policy_*.csv",
             parser="csv",
             table_name="unl_fym_policy",
-            parser_options={},
+            parser_options={
+                "dtype": {
+                    "zip": "string",
+                    "issue_date": "string",
+                    "app_recvd_date": "string",
+                    "paid_to_date": "string",
+                    "billing_mode": "string",
+                }
+            },
         )
     ]
 
@@ -113,7 +129,15 @@ def test_landed_csv_files_binds_filesystem_to_reader(monkeypatch) -> None:
                 file_glob="unl/inbound/FYM_Policy_*.csv",
                 parser="csv",
                 table_name="unl_fym_policy",
-                parser_options={},
+                parser_options={
+                    "dtype": {
+                        "zip": "string",
+                        "issue_date": "string",
+                        "app_recvd_date": "string",
+                        "paid_to_date": "string",
+                        "billing_mode": "string",
+                    }
+                },
             )
         ],
     )
@@ -125,7 +149,15 @@ def test_landed_csv_files_binds_filesystem_to_reader(monkeypatch) -> None:
     assert len(resources) == 1
     assert resources[0][0] == "unl_fym_policy"
     assert isinstance(resources[0][1], FakeReader)
-    assert resources[0][1].options == {}
+    assert resources[0][1].options == {
+        "dtype": {
+            "zip": "string",
+            "issue_date": "string",
+            "app_recvd_date": "string",
+            "paid_to_date": "string",
+            "billing_mode": "string",
+        }
+    }
 
 
 def test_sftp_to_s3_plan_preserves_relative_paths(monkeypatch) -> None:
