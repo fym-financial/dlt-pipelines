@@ -333,7 +333,7 @@ def test_record_file_events_upserts_audit_rows(monkeypatch) -> None:
 
 
 def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
-    calls = {"execute": []}
+    calls = {"execute": [], "copy": []}
 
     class FakeCursor:
         def __enter__(self) -> "FakeCursor":
@@ -344,6 +344,9 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
 
         def execute(self, query: str) -> None:
             calls["execute"].append(query)
+
+        def copy_expert(self, query: str, file) -> None:
+            calls["copy"].append(query)
 
         def fetchone(self) -> tuple[int]:
             return (42,)
@@ -362,22 +365,33 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
             calls["closed"] = True
 
     monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+    monkeypatch.setattr("dlt_pipelines.db._connect_roster_source", lambda: FakeConnection())
 
     result = refresh_typed_dataset("unl")
 
+    executed_sql = [query for query in calls["execute"] if isinstance(query, str)]
     assert result.provider == "unl"
     assert result.schema_name == "typed"
     assert result.table_name == "unl_fym_policy"
     assert result.row_count == 42
     assert calls["commit"] is True
     assert calls["closed"] is True
-    assert any(query.startswith("CREATE SCHEMA IF NOT EXISTS typed") for query in calls["execute"])
-    assert any(query.startswith("TRUNCATE TABLE typed.unl_fym_policy") for query in calls["execute"])
-    assert any(query.startswith("INSERT INTO typed.unl_fym_policy") for query in calls["execute"])
+    assert len(calls["copy"]) == 12
+    assert any(query.startswith("CREATE SCHEMA IF NOT EXISTS typed") for query in executed_sql)
+    assert any(query.startswith("TRUNCATE TABLE typed.unl_fym_policy") for query in executed_sql)
+    assert any(query.startswith("INSERT INTO typed.unl_fym_policy") for query in executed_sql)
     assert any(
         query.startswith("CREATE OR REPLACE VIEW typed.unl_fym_policy_latest_load")
-        for query in calls["execute"]
+        for query in executed_sql
     )
+    latest_load_sql = next(
+        query
+        for query in executed_sql
+        if query.startswith("CREATE OR REPLACE VIEW typed.unl_fym_policy_latest_load")
+    )
+    assert "roster_hierarchy_json" in latest_load_sql
+    assert "lpad(hierarchy_level::text, 2, '0')" in latest_load_sql
+    assert "ORDER BY traversal_depth DESC" in latest_load_sql
     assert calls["execute"][-1] == "SELECT count(*) FROM typed.unl_fym_policy"
 
 

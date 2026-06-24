@@ -137,6 +137,22 @@ secrets in Infisical and inject them as environment variables at runtime:
 | `DESTINATION__POSTGRES__CREDENTIALS__PORT` | Yes | `5432` | PostgreSQL port. |
 | `DESTINATION__POSTGRES__CREDENTIALS__CONNECT_TIMEOUT` | No | `15` | Connection timeout in seconds. |
 
+The UNL typed refresh also snapshots roster tables from the application database
+into `raw_roster` before rebuilding typed views. By default it reads
+`fym_prod` on the same PostgreSQL instance and reuses the destination
+host/user/password/port. Override these when refreshing from staging or when the
+roster source uses different credentials:
+
+| Infisical secret name | Required | Example | Notes |
+| --- | --- | --- | --- |
+| `ROSTER__POSTGRES__CREDENTIALS__DATABASE` | No | `fym_staging` | Defaults to `fym_prod`. Use `fym_prod` or `fym_staging`. |
+| `ROSTER__POSTGRES__CREDENTIALS__USERNAME` | No | `loader` | Defaults to the destination username. |
+| `ROSTER__POSTGRES__CREDENTIALS__PASSWORD` | No | `...` | Defaults to the destination password. |
+| `ROSTER__POSTGRES__CREDENTIALS__HOST` | No | `localhost` | Defaults to the destination host. |
+| `ROSTER__POSTGRES__CREDENTIALS__PORT` | No | `5432` | Defaults to the destination port. |
+| `ROSTER__POSTGRES__CREDENTIALS__CONNECT_TIMEOUT` | No | `15` | Defaults to the destination timeout. |
+| `ROSTER__POSTGRES__SCHEMA` | No | `public` | Source schema containing the `roster_*` tables. |
+
 The SFTP-to-S3 flow uses provider-scoped secrets for the `unl` provider:
 
 | Infisical secret name | Required | Example | Notes |
