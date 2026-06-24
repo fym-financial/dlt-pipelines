@@ -380,21 +380,23 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     assert any(query.startswith("CREATE SCHEMA IF NOT EXISTS typed") for query in executed_sql)
     assert any(query.startswith("TRUNCATE TABLE typed.unl_fym_policy") for query in executed_sql)
     assert any(query.startswith("INSERT INTO typed.unl_fym_policy") for query in executed_sql)
-    assert any(
-        query.startswith("CREATE OR REPLACE VIEW typed.unl_fym_policy_latest_load")
+    latest_load_sql_by_schema = {
+        query.split(".")[0].removeprefix("CREATE OR REPLACE VIEW "): query
         for query in executed_sql
-    )
-    latest_load_sql = next(
-        query
-        for query in executed_sql
-        if query.startswith("CREATE OR REPLACE VIEW typed.unl_fym_policy_latest_load")
-    )
-    assert "roster_hierarchy_json" in latest_load_sql
-    assert "nullif(trim(levels.writing_number::text), '') AS writing_number" in latest_load_sql
-    assert "trim(agency_carrier.writing_number) = levels.writing_number" in latest_load_sql
-    assert "trim(agent_carrier.writing_number) = levels.writing_number" in latest_load_sql
-    assert "lpad(hierarchy_level::text, 2, '0')" in latest_load_sql
-    assert "ORDER BY traversal_depth DESC" in latest_load_sql
+        if query.startswith("CREATE OR REPLACE VIEW ")
+        and query.endswith("ON policy_roster_hierarchy._dlt_id = p._dlt_id\n")
+    }
+    assert sorted(latest_load_sql_by_schema) == ["raw", "typed"]
+    for schema_name, latest_load_sql in latest_load_sql_by_schema.items():
+        assert f"CREATE OR REPLACE VIEW {schema_name}.unl_fym_policy_latest_load" in latest_load_sql
+        assert f"FROM {schema_name}.unl_fym_policy AS p" in latest_load_sql
+        assert "roster_hierarchy_json" in latest_load_sql
+        assert "nullif(trim(levels.writing_number::text), '') AS writing_number" in latest_load_sql
+        assert "trim(agency_carrier.writing_number) = levels.writing_number" in latest_load_sql
+        assert "trim(agent_carrier.writing_number) = levels.writing_number" in latest_load_sql
+        assert "lpad(hierarchy_level::text, 2, '0')" in latest_load_sql
+        assert "ORDER BY traversal_depth DESC" in latest_load_sql
+    assert "GRANT SELECT ON raw.unl_fym_policy_latest_load TO unl_fym_policy_reader" in executed_sql
     assert calls["execute"][-1] == "SELECT count(*) FROM typed.unl_fym_policy"
 
 

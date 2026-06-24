@@ -117,6 +117,9 @@ Refresh the typed PostgreSQL table from `raw` without running a new file load:
 infisical run --env=dev -- uv run dlt-pipeline refresh-typed unl
 ```
 
+This also refreshes roster snapshots and recreates both latest-load views:
+`raw.unl_fym_policy_latest_load` and `typed.unl_fym_policy_latest_load`.
+
 After a successful `load-s3`, matching landed files are moved into an `Archive`
 subdirectory beside their current B2/S3 location.
 

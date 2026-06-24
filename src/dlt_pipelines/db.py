@@ -415,7 +415,8 @@ def _typed_refresh_statements() -> tuple[str, ...]:
         f"CREATE TABLE IF NOT EXISTS typed.unl_fym_policy AS {typed_select} WITH NO DATA",
         "TRUNCATE TABLE typed.unl_fym_policy",
         f"INSERT INTO typed.unl_fym_policy {typed_select}",
-        _unl_fym_policy_latest_load_view_statement(),
+        _unl_fym_policy_latest_load_view_statement("raw"),
+        _unl_fym_policy_latest_load_view_statement("typed"),
         (
             "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_typed_dlt_id_idx "
             "ON typed.unl_fym_policy (_dlt_id)"
@@ -449,6 +450,8 @@ def _typed_refresh_statements() -> tuple[str, ...]:
             "ON typed.unl_fym_policy (at_risk_policy) "
             "WHERE at_risk_policy = true"
         ),
+        "GRANT USAGE ON SCHEMA raw TO unl_fym_policy_reader",
+        "GRANT SELECT ON raw.unl_fym_policy_latest_load TO unl_fym_policy_reader",
         "GRANT USAGE ON SCHEMA typed TO unl_fym_policy_reader",
         "GRANT SELECT ON ALL TABLES IN SCHEMA typed TO unl_fym_policy_reader",
         (
@@ -459,8 +462,8 @@ def _typed_refresh_statements() -> tuple[str, ...]:
     )
 
 
-def _unl_fym_policy_latest_load_view_statement() -> str:
-    return """CREATE OR REPLACE VIEW typed.unl_fym_policy_latest_load AS
+def _unl_fym_policy_latest_load_view_statement(schema_name: str) -> str:
+    return f"""CREATE OR REPLACE VIEW {schema_name}.unl_fym_policy_latest_load AS
 WITH RECURSIVE latest_file AS (
     SELECT fl.file_name
     FROM audit.file_landings AS fl
@@ -472,7 +475,7 @@ WITH RECURSIVE latest_file AS (
 ),
 latest_policy AS (
     SELECT p.*
-    FROM typed.unl_fym_policy AS p
+    FROM {schema_name}.unl_fym_policy AS p
     JOIN latest_file AS lf
       ON lf.file_name = p._source_file
 ),
