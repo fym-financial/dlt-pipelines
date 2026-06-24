@@ -480,7 +480,7 @@ policy_levels AS (
     SELECT
         p._dlt_id,
         levels.level_number,
-        nullif(levels.writing_number::text, '') AS writing_number
+        nullif(trim(levels.writing_number::text), '') AS writing_number
     FROM latest_policy AS p
     CROSS JOIN LATERAL (
         VALUES
@@ -495,7 +495,7 @@ policy_levels AS (
             (9, p.agent_level_09),
             (10, p.agent_level_10)
     ) AS levels(level_number, writing_number)
-    WHERE nullif(levels.writing_number::text, '') IS NOT NULL
+    WHERE nullif(trim(levels.writing_number::text), '') IS NOT NULL
 ),
 policy_agency_matches AS (
     SELECT
@@ -507,7 +507,7 @@ policy_agency_matches AS (
       ON carrier.name ILIKE '%unl%'
     JOIN raw_roster.roster_agencycarrier AS agency_carrier
       ON agency_carrier.carrier_id = carrier.id
-     AND agency_carrier.writing_number = levels.writing_number
+     AND trim(agency_carrier.writing_number) = levels.writing_number
 ),
 policy_agent_matches AS (
     SELECT DISTINCT ON (levels._dlt_id, levels.level_number)
@@ -519,7 +519,7 @@ policy_agent_matches AS (
       ON carrier.name ILIKE '%unl%'
     JOIN raw_roster.roster_agentcarrier AS agent_carrier
       ON agent_carrier.carrier_id = carrier.id
-     AND agent_carrier.writing_number = levels.writing_number
+     AND trim(agent_carrier.writing_number) = levels.writing_number
     JOIN raw_roster.roster_agentagency AS agent_agency
       ON agent_agency.agent_id = agent_carrier.agent_id
     JOIN raw_roster.roster_agencycarrier AS agency_carrier

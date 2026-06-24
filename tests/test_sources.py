@@ -390,6 +390,9 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         if query.startswith("CREATE OR REPLACE VIEW typed.unl_fym_policy_latest_load")
     )
     assert "roster_hierarchy_json" in latest_load_sql
+    assert "nullif(trim(levels.writing_number::text), '') AS writing_number" in latest_load_sql
+    assert "trim(agency_carrier.writing_number) = levels.writing_number" in latest_load_sql
+    assert "trim(agent_carrier.writing_number) = levels.writing_number" in latest_load_sql
     assert "lpad(hierarchy_level::text, 2, '0')" in latest_load_sql
     assert "ORDER BY traversal_depth DESC" in latest_load_sql
     assert calls["execute"][-1] == "SELECT count(*) FROM typed.unl_fym_policy"
