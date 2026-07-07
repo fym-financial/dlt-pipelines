@@ -12,34 +12,41 @@ from pathlib import Path
 
 
 EXPORT_COLUMNS = (
-    "transaction_type",
-    "row_number",
-    "policy_number",
-    "insured_name",
-    "agent_number",
+    "policy_nbr",
+    "desc",
+    "agent_nbr",
     "first_name",
     "last_name",
     "agency",
+    "trans_type",
     "plan",
-    "premium_paid_amount",
-    "commission_rate",
-    "commission_premium_amount",
-    "advance_percent",
+    "prem_paid_amt",
+    "comm_rate",
+    "comm_prem_amt",
+    "adv_per",
     "amount",
     "effective_date",
     "paid_to_date",
     "last_activity_date",
 )
 
-TEXT_COLUMNS = {
-    "transaction_type",
-    "policy_number",
-    "insured_name",
-    "agent_number",
-    "first_name",
-    "last_name",
-    "agency",
-    "plan",
+SOURCE_EXPRESSIONS = {
+    "policy_nbr": "trim(policy_number) AS policy_nbr",
+    "desc": "trim(insured_name) AS desc",
+    "agent_nbr": "trim(agent_number) AS agent_nbr",
+    "first_name": "trim(first_name) AS first_name",
+    "last_name": "trim(last_name) AS last_name",
+    "agency": "trim(agency) AS agency",
+    "trans_type": "trim(transaction_type) AS trans_type",
+    "plan": "trim(plan) AS plan",
+    "prem_paid_amt": "premium_paid_amount AS prem_paid_amt",
+    "comm_rate": "commission_rate AS comm_rate",
+    "comm_prem_amt": "commission_premium_amount AS comm_prem_amt",
+    "adv_per": "advance_percent AS adv_per",
+    "amount": "amount",
+    "effective_date": "effective_date",
+    "paid_to_date": "paid_to_date",
+    "last_activity_date": "last_activity_date",
 }
 
 
@@ -216,9 +223,7 @@ def _write_report_csv(
 
 
 def _select_expression(column: str) -> str:
-    if column in TEXT_COLUMNS:
-        return f"trim({column}) AS {column}"
-    return column
+    return SOURCE_EXPRESSIONS[column]
 
 
 def _output_filename(statement_date: str) -> str:

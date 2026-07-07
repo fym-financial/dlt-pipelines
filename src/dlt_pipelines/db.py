@@ -873,22 +873,22 @@ FROM typed_rows
 
 
 def _unl_weekly_advance_statements_typed_select() -> str:
-    return """
+    return f"""
 WITH base AS (
     SELECT
-        nullif(trim(p.transaction_type::text), '') AS transaction_type,
-        nullif(trim(p.row_number::text), '') AS row_number_text,
-        nullif(trim(p.policy_number::text), '') AS policy_number,
-        nullif(trim(p.insured_name::text), '') AS insured_name,
-        nullif(trim(p.agent_number::text), '') AS agent_number,
+        nullif(trim(p.trans_type::text), '') AS transaction_type,
+        row_number() OVER (PARTITION BY p._source_file ORDER BY p._dlt_id) AS source_row_number,
+        nullif(trim(p.policy_nbr::text), '') AS policy_number,
+        nullif(trim(p."desc"::text), '') AS insured_name,
+        nullif(trim(p.agent_nbr::text), '') AS agent_number,
         nullif(trim(p.first_name::text), '') AS first_name,
         nullif(trim(p.last_name::text), '') AS last_name,
         nullif(trim(p.agency::text), '') AS agency,
         nullif(trim(p.plan::text), '') AS plan,
-        nullif(trim(p.premium_paid_amount::text), '') AS premium_paid_amount_text,
-        nullif(trim(p.commission_rate::text), '') AS commission_rate_text,
-        nullif(trim(p.commission_premium_amount::text), '') AS commission_premium_amount_text,
-        nullif(trim(p.advance_percent::text), '') AS advance_percent_text,
+        nullif(trim(p.prem_paid_amt::text), '') AS premium_paid_amount_text,
+        nullif(trim(p.comm_rate::text), '') AS commission_rate_text,
+        nullif(trim(p.comm_prem_amt::text), '') AS commission_premium_amount_text,
+        nullif(trim(p.adv_per::text), '') AS advance_percent_text,
         nullif(trim(p.amount::text), '') AS amount_text,
         nullif(trim(p.effective_date::text), '') AS effective_date_text,
         nullif(trim(p.paid_to_date::text), '') AS paid_to_date_text,
@@ -902,10 +902,7 @@ WITH base AS (
 typed_rows AS (
     SELECT
         transaction_type,
-        CASE
-            WHEN row_number_text ~ '^\\d+$'
-            THEN row_number_text::integer
-        END AS row_number,
+        source_row_number AS row_number,
         policy_number,
         insured_name,
         agent_number,
@@ -934,19 +931,13 @@ typed_rows AS (
             THEN amount_text::numeric
         END AS amount,
         CASE
-            WHEN effective_date_text ~ '^\\d{4}-\\d{2}-\\d{2}$'
-             AND to_char(to_date(effective_date_text, 'YYYY-MM-DD'), 'YYYY-MM-DD') = effective_date_text
-            THEN to_date(effective_date_text, 'YYYY-MM-DD')
+            {_date_parse_sql("effective_date_text")}
         END AS effective_date,
         CASE
-            WHEN paid_to_date_text ~ '^\\d{4}-\\d{2}-\\d{2}$'
-             AND to_char(to_date(paid_to_date_text, 'YYYY-MM-DD'), 'YYYY-MM-DD') = paid_to_date_text
-            THEN to_date(paid_to_date_text, 'YYYY-MM-DD')
+            {_date_parse_sql("paid_to_date_text")}
         END AS paid_to_date,
         CASE
-            WHEN last_activity_date_text ~ '^\\d{4}-\\d{2}-\\d{2}$'
-             AND to_char(to_date(last_activity_date_text, 'YYYY-MM-DD'), 'YYYY-MM-DD') = last_activity_date_text
-            THEN to_date(last_activity_date_text, 'YYYY-MM-DD')
+            {_date_parse_sql("last_activity_date_text")}
         END AS last_activity_date,
         _source_file,
         _dlt_load_id,
@@ -960,3 +951,21 @@ typed_rows AS (
 SELECT *
 FROM typed_rows
 """
+
+
+def _date_parse_sql(column_name: str) -> str:
+    return f"""
+            WHEN {column_name} ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}$'
+             AND to_char(to_date({column_name}, 'YYYY-MM-DD'), 'YYYY-MM-DD') = {column_name}
+            THEN to_date({column_name}, 'YYYY-MM-DD')
+            WHEN {column_name} ~ '^\\d{{8}}$'
+             AND to_char(to_date({column_name}, 'YYYYMMDD'), 'YYYYMMDD') = {column_name}
+            THEN to_date({column_name}, 'YYYYMMDD')
+            WHEN {column_name} ~ '^\\d{{1,2}}/\\d{{1,2}}/\\d{{4}}$'
+             AND to_char(to_date({column_name}, 'MM/DD/YYYY'), 'FMMM/FMDD/YYYY') =
+                 regexp_replace({column_name}, '^0?(\\d{{1,2}})/0?(\\d{{1,2}})/(\\d{{4}})$', '\\1/\\2/\\3')
+            THEN to_date({column_name}, 'MM/DD/YYYY')
+            WHEN {column_name} ~ '^\\d{{1,2}}-\\d{{1,2}}-\\d{{4}}$'
+             AND to_char(to_date({column_name}, 'MM-DD-YYYY'), 'FMMM-FMDD-YYYY') =
+                 regexp_replace({column_name}, '^0?(\\d{{1,2}})-0?(\\d{{1,2}})-(\\d{{4}})$', '\\1-\\2-\\3')
+            THEN to_date({column_name}, 'MM-DD-YYYY')"""

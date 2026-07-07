@@ -569,6 +569,17 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         query.startswith("INSERT INTO typed.unl_weekly_advance_statements")
         for query in executed_sql
     )
+    weekly_advance_insert_sql = next(
+        query
+        for query in executed_sql
+        if query.startswith("INSERT INTO typed.unl_weekly_advance_statements")
+    )
+    assert "to_date(effective_date_text, 'YYYY-MM-DD')" in weekly_advance_insert_sql
+    assert "to_date(effective_date_text, 'YYYYMMDD')" in weekly_advance_insert_sql
+    assert "to_date(effective_date_text, 'MM/DD/YYYY')" in weekly_advance_insert_sql
+    assert "to_date(effective_date_text, 'MM-DD-YYYY')" in weekly_advance_insert_sql
+    assert "to_date(paid_to_date_text, 'MM/DD/YYYY')" in weekly_advance_insert_sql
+    assert "to_date(last_activity_date_text, 'MM-DD-YYYY')" in weekly_advance_insert_sql
     latest_load_sql_by_schema = {
         query.split(".")[0].removeprefix("CREATE OR REPLACE VIEW "): query
         for query in executed_sql
