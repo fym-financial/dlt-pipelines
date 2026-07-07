@@ -216,6 +216,18 @@ name = "monthly_commissions"
 file_glob = "unl/inbound/CommissionStatements/MC_*.csv"
 parser = "csv"
 table_name = "unl_monthly_commissions"
+
+[[sftp_providers.unl.routes]]
+name = "weekly_advance_statements"
+file_glob = "unl/inbound/CommissionStatements/WA_*.csv"
+parser = "csv"
+table_name = "unl_weekly_advance_statements"
+
+[[sftp_providers.unl.routes]]
+name = "monthly_advance_statements"
+file_glob = "unl/inbound/CommissionStatements/MA_*.csv"
+parser = "csv"
+table_name = "unl_monthly_advance_statements"
 ```
 
 The explicit `[load]` settings are intentional. With `dlt` 1.27.2, the load

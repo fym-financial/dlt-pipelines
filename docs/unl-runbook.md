@@ -22,6 +22,8 @@ The UNL SFTP account may expose files in the root directory and in a
 ./LifeProfessionals_Policy_YYYYMMDDHHMMSS.csv
 /CommissionStatements/WC_202JVV00_YYYY_MM_DD.csv
 /CommissionStatements/MC_202JVV00_YYYY_MM_DD.csv
+/CommissionStatements/WA_202JVV00_YYYY_MM_DD.csv
+/CommissionStatements/MA_202JVV00_YYYY_MM_DD.csv
 ```
 
 The configured B2/S3 landing prefix is expected to be:
@@ -39,6 +41,8 @@ raw.unl_fym_policy
 raw.unl_life_professionals_policy
 raw.unl_weekly_commissions
 raw.unl_monthly_commissions
+raw.unl_weekly_advance_statements
+raw.unl_monthly_advance_statements
 ```
 
 Only routes with matching landed files load rows.
@@ -98,6 +102,7 @@ SFTP patterns:
 SFTP listing: <count> item(s) found.
 file ./FYM_Policy_YYYYMMDDHHMMSS.csv
 file /CommissionStatements/WC_202JVV00_YYYY_MM_DD.csv
+file /CommissionStatements/WA_202JVV00_YYYY_MM_DD.csv
 ```
 
 This command does not copy or delete files. It confirms what the SFTP server
@@ -123,6 +128,7 @@ S3 target prefix: unl/inbound
 Dry run: <count> file(s) would be moved to S3.
 ./FYM_Policy_YYYYMMDDHHMMSS.csv -> fym-inbound-files/unl/inbound/FYM_Policy_YYYYMMDDHHMMSS.csv
 /CommissionStatements/WC_202JVV00_YYYY_MM_DD.csv -> fym-inbound-files/unl/inbound/CommissionStatements/WC_202JVV00_YYYY_MM_DD.csv
+/CommissionStatements/WA_202JVV00_YYYY_MM_DD.csv -> fym-inbound-files/unl/inbound/CommissionStatements/WA_202JVV00_YYYY_MM_DD.csv
 ```
 
 This command does not copy or delete files. Use it to verify source-to-target
@@ -198,6 +204,8 @@ unl/inbound/FYM_Policy_YYYYMMDDHHMMSS.csv
 
 unl/inbound/CommissionStatements/WC_202JVV00_YYYY_MM_DD.csv
 -> unl/inbound/CommissionStatements/Archive/WC_202JVV00_YYYY_MM_DD.csv
+unl/inbound/CommissionStatements/WA_202JVV00_YYYY_MM_DD.csv
+-> unl/inbound/CommissionStatements/Archive/WA_202JVV00_YYYY_MM_DD.csv
 ```
 
 To load without archiving:

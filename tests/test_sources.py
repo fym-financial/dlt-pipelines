@@ -65,6 +65,20 @@ def test_unl_routes_are_configured() -> None:
             table_name="unl_monthly_commissions",
             parser_options={},
         ),
+        FileRoute(
+            name="weekly_advance_statements",
+            file_glob="unl/inbound/CommissionStatements/WA_*.csv",
+            parser="csv",
+            table_name="unl_weekly_advance_statements",
+            parser_options={},
+        ),
+        FileRoute(
+            name="monthly_advance_statements",
+            file_glob="unl/inbound/CommissionStatements/MA_*.csv",
+            parser="csv",
+            table_name="unl_monthly_advance_statements",
+            parser_options={},
+        ),
     ]
 
 
@@ -102,6 +116,50 @@ def test_routes_with_matches_skips_empty_patterns(monkeypatch) -> None:
                 }
             },
         )
+    ]
+
+
+def test_advance_statement_routes_match_updated_filenames(monkeypatch) -> None:
+    class FakeS3Fs:
+        def glob(self, pattern: str) -> list[str]:
+            if pattern == "landing-bucket/unl/inbound/CommissionStatements/WA_*.csv":
+                return [
+                    "landing-bucket/unl/inbound/CommissionStatements/"
+                    "WA_202JVV00_2026_06_10.csv"
+                ]
+            if pattern == "landing-bucket/unl/inbound/CommissionStatements/MA_*.csv":
+                return [
+                    "landing-bucket/unl/inbound/CommissionStatements/"
+                    "MA_202JVV00_2026_06_10.csv"
+                ]
+            return []
+
+        def isdir(self, path: str) -> bool:
+            return False
+
+    def fake_url_to_fs(url: str, **kwargs: object):
+        assert url == "s3://landing-bucket"
+        return FakeS3Fs(), "landing-bucket"
+
+    monkeypatch.setattr("dlt_pipelines.sources.s3.fsspec.core.url_to_fs", fake_url_to_fs)
+
+    routes = _routes_with_matches("s3://landing-bucket", _routes_for_provider("unl"))
+
+    assert routes == [
+        FileRoute(
+            name="weekly_advance_statements",
+            file_glob="unl/inbound/CommissionStatements/WA_*.csv",
+            parser="csv",
+            table_name="unl_weekly_advance_statements",
+            parser_options={},
+        ),
+        FileRoute(
+            name="monthly_advance_statements",
+            file_glob="unl/inbound/CommissionStatements/MA_*.csv",
+            parser="csv",
+            table_name="unl_monthly_advance_statements",
+            parser_options={},
+        ),
     ]
 
 
@@ -509,6 +567,11 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
                     "landing-bucket/unl/inbound/CommissionStatements/"
                     "WC_202JVV00_2026_05_27.csv"
                 ]
+            if pattern == "landing-bucket/unl/inbound/CommissionStatements/WA_*.csv":
+                return [
+                    "landing-bucket/unl/inbound/CommissionStatements/"
+                    "WA_202JVV00_2026_05_27.csv"
+                ]
             return []
 
         def isdir(self, path: str) -> bool:
@@ -546,6 +609,16 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
             archive_path=(
                 "landing-bucket/unl/inbound/CommissionStatements/Archive/"
                 "WC_202JVV00_2026_05_27.csv"
+            ),
+        ),
+        ArchivePlanItem(
+            source_path=(
+                "landing-bucket/unl/inbound/CommissionStatements/"
+                "WA_202JVV00_2026_05_27.csv"
+            ),
+            archive_path=(
+                "landing-bucket/unl/inbound/CommissionStatements/Archive/"
+                "WA_202JVV00_2026_05_27.csv"
             ),
         ),
     ]
