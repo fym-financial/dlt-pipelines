@@ -1,5 +1,8 @@
+from datetime import datetime, timedelta, timezone
+
 from dlt_pipelines.db import (
     FileAuditEvent,
+    check_unl_fym_policy_loaded,
     check_postgres_connection,
     record_file_events,
     refresh_typed_dataset,
@@ -388,6 +391,122 @@ def test_record_file_events_upserts_audit_rows(monkeypatch) -> None:
         "moved_to_landing",
         None,
     )
+
+
+def test_check_unl_fym_policy_loaded_uses_latest_loaded_fym_policy(monkeypatch) -> None:
+    calls = {}
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[object, ...]) -> None:
+            calls["query"] = query
+            calls["params"] = params
+
+        def fetchone(self) -> tuple[str, datetime, str]:
+            return (
+                "FYM_Policy_20260706100022.csv",
+                datetime(2026, 7, 6, 11, tzinfo=timezone.utc),
+                "loaded_to_postgres",
+            )
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+
+    result = check_unl_fym_policy_loaded(
+        max_age=timedelta(hours=30),
+        current_time=datetime(2026, 7, 6, 16, tzinfo=timezone.utc),
+    )
+
+    assert "status = 'loaded_to_postgres'" in calls["query"]
+    assert "ESCAPE" in calls["query"]
+    assert "ORDER BY landed_at DESC, file_name DESC" in calls["query"]
+    assert calls["params"] == (r"FYM\_Policy\_%.csv",)
+    assert calls["closed"] is True
+    assert result.found is True
+    assert result.is_recent is True
+    assert result.file_name == "FYM_Policy_20260706100022.csv"
+    assert result.age == timedelta(hours=5)
+
+
+def test_check_unl_fym_policy_loaded_reports_missing(monkeypatch) -> None:
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[object, ...]) -> None:
+            return None
+
+        def fetchone(self) -> None:
+            return None
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+
+    result = check_unl_fym_policy_loaded(
+        max_age=timedelta(hours=30),
+        current_time=datetime(2026, 7, 6, 16, tzinfo=timezone.utc),
+    )
+
+    assert result.found is False
+    assert result.is_recent is False
+    assert result.file_pattern == r"FYM\_Policy\_%.csv"
+
+
+def test_check_unl_fym_policy_loaded_reports_stale(monkeypatch) -> None:
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[object, ...]) -> None:
+            return None
+
+        def fetchone(self) -> tuple[str, datetime, str]:
+            return (
+                "FYM_Policy_20260705100022.csv",
+                datetime(2026, 7, 5, 11, tzinfo=timezone.utc),
+                "loaded_to_postgres",
+            )
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+
+    result = check_unl_fym_policy_loaded(
+        max_age=timedelta(hours=30),
+        current_time=datetime(2026, 7, 6, 18, tzinfo=timezone.utc),
+    )
+
+    assert result.found is True
+    assert result.is_recent is False
+    assert result.age == timedelta(hours=31)
 
 
 def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:

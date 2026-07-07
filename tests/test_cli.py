@@ -1,6 +1,8 @@
 import sys
+from datetime import datetime, timedelta, timezone
 
 from dlt_pipelines import cli
+from dlt_pipelines.db import ExpectedFileCheckResult
 
 
 def test_refresh_typed_command_prints_result(monkeypatch, capsys) -> None:
@@ -102,3 +104,101 @@ def test_run_sftp_flow_exits_cleanly_when_no_files_moved(monkeypatch, capsys) ->
     assert calls["loaded"] is False
     assert "Moved 0 file(s) to S3." in captured.out
     assert "No files moved for provider unl; skipping S3 load." in captured.out
+
+
+def test_check_fym_policy_load_prints_found_result(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "check_unl_fym_policy_loaded",
+        lambda max_age: ExpectedFileCheckResult(
+            provider="unl",
+            file_type="fym_policy",
+            file_pattern=r"FYM\_Policy\_%.csv",
+            found=True,
+            current_time=datetime(2026, 7, 6, 16, tzinfo=timezone.utc),
+            max_age=max_age,
+            file_name="FYM_Policy_20260706100022.csv",
+            landed_at=datetime(2026, 7, 6, 11, tzinfo=timezone.utc),
+            age=timedelta(hours=5),
+            status="loaded_to_postgres",
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dlt-pipeline", "check-fym-policy-load", "--max-age-hours", "30"],
+    )
+
+    cli.main()
+
+    captured = capsys.readouterr()
+    assert "Latest loaded UNL FYM policy file is recent" in captured.out
+    assert "FYM_Policy_20260706100022.csv" in captured.out
+    assert "age 5h 0m" in captured.out
+
+
+def test_check_fym_policy_load_exits_nonzero_when_missing(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "check_unl_fym_policy_loaded",
+        lambda max_age: ExpectedFileCheckResult(
+            provider="unl",
+            file_type="fym_policy",
+            file_pattern=r"FYM\_Policy\_%.csv",
+            found=False,
+            current_time=datetime(2026, 7, 6, 16, tzinfo=timezone.utc),
+            max_age=max_age,
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dlt-pipeline", "check-fym-policy-load"],
+    )
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected missing file check to exit nonzero")
+
+    captured = capsys.readouterr()
+    assert "Missing loaded UNL FYM policy file" in captured.out
+    assert r"FYM\_Policy\_%.csv" in captured.out
+
+
+def test_check_fym_policy_load_exits_nonzero_when_stale(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "check_unl_fym_policy_loaded",
+        lambda max_age: ExpectedFileCheckResult(
+            provider="unl",
+            file_type="fym_policy",
+            file_pattern=r"FYM\_Policy\_%.csv",
+            found=True,
+            current_time=datetime(2026, 7, 6, 18, tzinfo=timezone.utc),
+            max_age=max_age,
+            file_name="FYM_Policy_20260705100022.csv",
+            landed_at=datetime(2026, 7, 5, 11, tzinfo=timezone.utc),
+            age=timedelta(hours=31),
+            status="loaded_to_postgres",
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dlt-pipeline", "check-fym-policy-load", "--max-age-hours", "30"],
+    )
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected stale file check to exit nonzero")
+
+    captured = capsys.readouterr()
+    assert "Latest loaded UNL FYM policy file is stale" in captured.out
+    assert "age 31h 0m" in captured.out
+    assert "max age 30h 0m" in captured.out

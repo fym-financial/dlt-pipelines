@@ -226,6 +226,17 @@ To refresh the typed table from the latest raw data without running a new load:
 infisical run --env=dev -- uv run dlt-pipeline refresh-typed unl
 ```
 
+To check whether the latest daily FYM policy file load is recent enough:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline check-fym-policy-load --max-age-hours 30
+```
+
+This exits `0` when the latest `FYM_Policy_*.csv` file has a
+`loaded_to_postgres` audit row no older than the threshold, and exits `2` when
+the loaded file is missing or stale. Use the same command with `--env=prod`
+from cron after the expected delivery window.
+
 ## 7. Archive Only
 
 Preview archive moves:

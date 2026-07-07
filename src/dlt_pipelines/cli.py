@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from datetime import timedelta
 
 from dlt_pipelines.db import (
     FileAuditEvent,
+    check_unl_fym_policy_loaded,
     check_postgres_connection,
     record_file_events,
     refresh_typed_dataset,
@@ -151,6 +153,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     refresh_typed_parser.add_argument("provider", help="Provider key, such as unl.")
 
+    check_fym_policy_parser = subparsers.add_parser(
+        "check-fym-policy-load",
+        help="Check whether the latest UNL FYM policy load is recent enough.",
+    )
+    check_fym_policy_parser.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=30.0,
+        help="Maximum age in hours for the latest loaded FYM policy file. Defaults to 30.",
+    )
+
     subparsers.add_parser(
         "check-db",
         help="Verify PostgreSQL connectivity using configured destination credentials.",
@@ -249,6 +262,27 @@ def main() -> None:
         _refresh_typed_and_print(args.provider)
         return
 
+    if args.command == "check-fym-policy-load":
+        result = check_unl_fym_policy_loaded(max_age=timedelta(hours=args.max_age_hours))
+        if result.is_recent:
+            print(
+                f"Latest loaded UNL FYM policy file is recent: {result.file_name} "
+                f"({result.status} at {result.landed_at}, age {_format_timedelta(result.age)})."
+            )
+            return
+        if result.found:
+            print(
+                f"Latest loaded UNL FYM policy file is stale: {result.file_name} "
+                f"({result.status} at {result.landed_at}, age {_format_timedelta(result.age)}; "
+                f"max age {_format_timedelta(result.max_age)})."
+            )
+            raise SystemExit(2)
+        print(
+            "Missing loaded UNL FYM policy file: expected latest audit row with "
+            f"file_name LIKE {result.file_pattern} and status loaded_to_postgres."
+        )
+        raise SystemExit(2)
+
     if args.command == "check-db":
         result = check_postgres_connection()
         print("PostgreSQL connection OK.")
@@ -287,6 +321,15 @@ def _refresh_typed_and_print(provider: str) -> None:
         f"Refreshed {result.schema_name}.{result.table_name} for provider "
         f"{result.provider} with {result.row_count} row(s)."
     )
+
+
+def _format_timedelta(value: timedelta | None) -> str:
+    if value is None:
+        return "unknown"
+    total_seconds = max(0, int(value.total_seconds()))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    return f"{hours}h {minutes}m"
 
 
 def _record_copied_files(provider: str, copied_paths: list[str]) -> None:

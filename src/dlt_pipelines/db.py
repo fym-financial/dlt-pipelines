@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import PurePosixPath
 
@@ -36,6 +37,24 @@ class FileAuditEvent:
     status: str
     file_size_bytes: int | None = None
     error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class ExpectedFileCheckResult:
+    provider: str
+    file_type: str
+    file_pattern: str
+    found: bool
+    current_time: datetime
+    max_age: timedelta
+    file_name: str | None = None
+    landed_at: datetime | None = None
+    age: timedelta | None = None
+    status: str | None = None
+
+    @property
+    def is_recent(self) -> bool:
+        return self.found and self.age is not None and self.age <= self.max_age
 
 
 @dataclass(frozen=True)
@@ -209,6 +228,64 @@ def record_file_events(events: list[FileAuditEvent]) -> int:
         connection.close()
 
     return len(events)
+
+
+def check_unl_fym_policy_loaded(
+    *,
+    max_age: timedelta,
+    current_time: datetime | None = None,
+) -> ExpectedFileCheckResult:
+    file_pattern = r"FYM\_Policy\_%.csv"
+    checked_at = current_time or datetime.now(timezone.utc)
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+
+    connection = _connect()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT file_name, landed_at, status
+                FROM audit.file_landings
+                WHERE provider = 'unl'
+                  AND status = 'loaded_to_postgres'
+                  AND file_name LIKE %s
+                  ESCAPE '\\'
+                ORDER BY landed_at DESC, file_name DESC
+                LIMIT 1
+                """,
+                (file_pattern,),
+            )
+            row = cursor.fetchone()
+    finally:
+        connection.close()
+
+    if row is None:
+        return ExpectedFileCheckResult(
+            provider="unl",
+            file_type="fym_policy",
+            file_pattern=file_pattern,
+            found=False,
+            current_time=checked_at,
+            max_age=max_age,
+        )
+
+    landed_at = row[1]
+    if landed_at.tzinfo is None:
+        landed_at = landed_at.replace(tzinfo=timezone.utc)
+
+    return ExpectedFileCheckResult(
+        provider="unl",
+        file_type="fym_policy",
+        file_pattern=file_pattern,
+        found=True,
+        current_time=checked_at,
+        max_age=max_age,
+        file_name=row[0],
+        landed_at=landed_at,
+        age=checked_at - landed_at,
+        status=row[2],
+    )
 
 
 def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
