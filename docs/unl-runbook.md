@@ -192,7 +192,8 @@ Expected outcome:
 1. DLT loads matching landed files into PostgreSQL.
 2. DLT prints load package information.
 3. `loaded_to_postgres` audit rows are recorded.
-4. `typed.unl_fym_policy` is refreshed from `raw.unl_fym_policy`.
+4. `typed.unl_fym_policy` and `typed.unl_weekly_advance_statements` are
+   refreshed from the matching `raw` tables.
 5. After a successful load, files are moved into `Archive` subdirectories.
 6. `archived` audit rows are recorded.
 
@@ -274,7 +275,8 @@ Expected outcome:
 1. Matching SFTP files are moved into B2/S3.
 2. SFTP source files are deleted only after B2/S3 target size verification.
 3. Landed files are routed and loaded into PostgreSQL.
-4. `typed.unl_fym_policy` is refreshed from `raw.unl_fym_policy`.
+4. `typed.unl_fym_policy` and `typed.unl_weekly_advance_statements` are
+   refreshed from the matching `raw` tables.
 5. Successfully loaded files are moved into Archive subdirectories.
 6. Audit rows are recorded for move, load, and archive stages.
 

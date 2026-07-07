@@ -557,6 +557,18 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     assert any(query.startswith("CREATE SCHEMA IF NOT EXISTS typed") for query in executed_sql)
     assert any(query.startswith("TRUNCATE TABLE typed.unl_fym_policy") for query in executed_sql)
     assert any(query.startswith("INSERT INTO typed.unl_fym_policy") for query in executed_sql)
+    assert any(
+        query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements")
+        for query in executed_sql
+    )
+    assert any(
+        query.startswith("TRUNCATE TABLE typed.unl_weekly_advance_statements")
+        for query in executed_sql
+    )
+    assert any(
+        query.startswith("INSERT INTO typed.unl_weekly_advance_statements")
+        for query in executed_sql
+    )
     latest_load_sql_by_schema = {
         query.split(".")[0].removeprefix("CREATE OR REPLACE VIEW "): query
         for query in executed_sql
@@ -573,7 +585,31 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         assert "trim(agent_carrier.writing_number) = levels.writing_number" in latest_load_sql
         assert "lpad(hierarchy_level::text, 2, '0')" in latest_load_sql
         assert "ORDER BY traversal_depth DESC" in latest_load_sql
+    weekly_advance_latest_load_sql_by_schema = {
+        query.split(".")[0].removeprefix("CREATE OR REPLACE VIEW "): query
+        for query in executed_sql
+        if query.startswith("CREATE OR REPLACE VIEW ")
+        and "unl_weekly_advance_statements_latest_load" in query
+    }
+    assert sorted(weekly_advance_latest_load_sql_by_schema) == ["raw", "typed"]
+    for schema_name, latest_load_sql in weekly_advance_latest_load_sql_by_schema.items():
+        assert (
+            f"CREATE OR REPLACE VIEW {schema_name}.unl_weekly_advance_statements_latest_load"
+            in latest_load_sql
+        )
+        assert f"FROM {schema_name}.unl_weekly_advance_statements AS p" in latest_load_sql
+        assert "fl.file_name LIKE 'WA_%.csv'" in latest_load_sql
+    assert any(
+        "ON typed.unl_weekly_advance_statements (_dlt_id)" in query for query in executed_sql
+    )
+    assert any(
+        "ON typed.unl_weekly_advance_statements (file_date)" in query for query in executed_sql
+    )
     assert "GRANT SELECT ON raw.unl_fym_policy_latest_load TO unl_fym_policy_reader" in executed_sql
+    assert (
+        "GRANT SELECT ON raw.unl_weekly_advance_statements_latest_load TO unl_fym_policy_reader"
+        in executed_sql
+    )
     assert calls["execute"][-1] == "SELECT count(*) FROM typed.unl_fym_policy"
 
 

@@ -486,14 +486,23 @@ def _roster_snapshot_index_statements() -> tuple[str, ...]:
 
 
 def _typed_refresh_statements() -> tuple[str, ...]:
-    typed_select = _unl_fym_policy_typed_select()
+    fym_policy_typed_select = _unl_fym_policy_typed_select()
+    weekly_advance_typed_select = _unl_weekly_advance_statements_typed_select()
     return (
         "CREATE SCHEMA IF NOT EXISTS typed",
-        f"CREATE TABLE IF NOT EXISTS typed.unl_fym_policy AS {typed_select} WITH NO DATA",
+        f"CREATE TABLE IF NOT EXISTS typed.unl_fym_policy AS {fym_policy_typed_select} WITH NO DATA",
         "TRUNCATE TABLE typed.unl_fym_policy",
-        f"INSERT INTO typed.unl_fym_policy {typed_select}",
+        f"INSERT INTO typed.unl_fym_policy {fym_policy_typed_select}",
+        (
+            "CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements AS "
+            f"{weekly_advance_typed_select} WITH NO DATA"
+        ),
+        "TRUNCATE TABLE typed.unl_weekly_advance_statements",
+        f"INSERT INTO typed.unl_weekly_advance_statements {weekly_advance_typed_select}",
         _unl_fym_policy_latest_load_view_statement("raw"),
         _unl_fym_policy_latest_load_view_statement("typed"),
+        _unl_weekly_advance_latest_load_view_statement("raw"),
+        _unl_weekly_advance_latest_load_view_statement("typed"),
         (
             "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_typed_dlt_id_idx "
             "ON typed.unl_fym_policy (_dlt_id)"
@@ -527,8 +536,33 @@ def _typed_refresh_statements() -> tuple[str, ...]:
             "ON typed.unl_fym_policy (at_risk_policy) "
             "WHERE at_risk_policy = true"
         ),
+        (
+            "CREATE UNIQUE INDEX IF NOT EXISTS unl_weekly_advance_statements_typed_dlt_id_idx "
+            "ON typed.unl_weekly_advance_statements (_dlt_id)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS unl_weekly_advance_statements_typed_source_file_idx "
+            "ON typed.unl_weekly_advance_statements (_source_file)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS unl_weekly_advance_statements_typed_file_date_idx "
+            "ON typed.unl_weekly_advance_statements (file_date)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS unl_weekly_advance_statements_typed_policy_number_idx "
+            "ON typed.unl_weekly_advance_statements (policy_number)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS unl_weekly_advance_statements_typed_agent_number_idx "
+            "ON typed.unl_weekly_advance_statements (agent_number)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS unl_weekly_advance_statements_typed_effective_date_idx "
+            "ON typed.unl_weekly_advance_statements (effective_date)"
+        ),
         "GRANT USAGE ON SCHEMA raw TO unl_fym_policy_reader",
         "GRANT SELECT ON raw.unl_fym_policy_latest_load TO unl_fym_policy_reader",
+        "GRANT SELECT ON raw.unl_weekly_advance_statements_latest_load TO unl_fym_policy_reader",
         "GRANT USAGE ON SCHEMA typed TO unl_fym_policy_reader",
         "GRANT SELECT ON ALL TABLES IN SCHEMA typed TO unl_fym_policy_reader",
         (
@@ -536,6 +570,7 @@ def _typed_refresh_statements() -> tuple[str, ...]:
             "GRANT SELECT ON TABLES TO unl_fym_policy_reader"
         ),
         "ANALYZE typed.unl_fym_policy",
+        "ANALYZE typed.unl_weekly_advance_statements",
     )
 
 
@@ -695,6 +730,24 @@ LEFT JOIN policy_roster_hierarchy
 """
 
 
+def _unl_weekly_advance_latest_load_view_statement(schema_name: str) -> str:
+    return f"""CREATE OR REPLACE VIEW {schema_name}.unl_weekly_advance_statements_latest_load AS
+WITH latest_file AS (
+    SELECT fl.file_name
+    FROM audit.file_landings AS fl
+    WHERE fl.provider = 'unl'
+      AND fl.status = 'loaded_to_postgres'
+      AND fl.file_name LIKE 'WA_%.csv'
+    ORDER BY fl.landed_at DESC, fl.file_name DESC
+    LIMIT 1
+)
+SELECT p.*
+FROM {schema_name}.unl_weekly_advance_statements AS p
+JOIN latest_file AS lf
+  ON lf.file_name = p._source_file
+"""
+
+
 def _unl_fym_policy_typed_select() -> str:
     return """
 WITH base AS (
@@ -815,5 +868,95 @@ SELECT
         AND file_date IS NOT NULL
         AND paid_to_date < file_date
     ) AS at_risk_policy
+FROM typed_rows
+"""
+
+
+def _unl_weekly_advance_statements_typed_select() -> str:
+    return """
+WITH base AS (
+    SELECT
+        nullif(trim(p.transaction_type::text), '') AS transaction_type,
+        nullif(trim(p.row_number::text), '') AS row_number_text,
+        nullif(trim(p.policy_number::text), '') AS policy_number,
+        nullif(trim(p.insured_name::text), '') AS insured_name,
+        nullif(trim(p.agent_number::text), '') AS agent_number,
+        nullif(trim(p.first_name::text), '') AS first_name,
+        nullif(trim(p.last_name::text), '') AS last_name,
+        nullif(trim(p.agency::text), '') AS agency,
+        nullif(trim(p.plan::text), '') AS plan,
+        nullif(trim(p.premium_paid_amount::text), '') AS premium_paid_amount_text,
+        nullif(trim(p.commission_rate::text), '') AS commission_rate_text,
+        nullif(trim(p.commission_premium_amount::text), '') AS commission_premium_amount_text,
+        nullif(trim(p.advance_percent::text), '') AS advance_percent_text,
+        nullif(trim(p.amount::text), '') AS amount_text,
+        nullif(trim(p.effective_date::text), '') AS effective_date_text,
+        nullif(trim(p.paid_to_date::text), '') AS paid_to_date_text,
+        nullif(trim(p.last_activity_date::text), '') AS last_activity_date_text,
+        p._source_file,
+        p._dlt_load_id,
+        p._dlt_id,
+        substring(p._source_file from 'WA_202JVV00_(\\d{4}_\\d{2}_\\d{2})') AS file_date_text
+    FROM raw.unl_weekly_advance_statements AS p
+),
+typed_rows AS (
+    SELECT
+        transaction_type,
+        CASE
+            WHEN row_number_text ~ '^\\d+$'
+            THEN row_number_text::integer
+        END AS row_number,
+        policy_number,
+        insured_name,
+        agent_number,
+        first_name,
+        last_name,
+        agency,
+        plan,
+        CASE
+            WHEN premium_paid_amount_text ~ '^-?\\d+(\\.\\d+)?$'
+            THEN premium_paid_amount_text::numeric
+        END AS premium_paid_amount,
+        CASE
+            WHEN commission_rate_text ~ '^-?\\d+(\\.\\d+)?$'
+            THEN commission_rate_text::numeric
+        END AS commission_rate,
+        CASE
+            WHEN commission_premium_amount_text ~ '^-?\\d+(\\.\\d+)?$'
+            THEN commission_premium_amount_text::numeric
+        END AS commission_premium_amount,
+        CASE
+            WHEN advance_percent_text ~ '^-?\\d+(\\.\\d+)?$'
+            THEN advance_percent_text::numeric
+        END AS advance_percent,
+        CASE
+            WHEN amount_text ~ '^-?\\d+(\\.\\d+)?$'
+            THEN amount_text::numeric
+        END AS amount,
+        CASE
+            WHEN effective_date_text ~ '^\\d{4}-\\d{2}-\\d{2}$'
+             AND to_char(to_date(effective_date_text, 'YYYY-MM-DD'), 'YYYY-MM-DD') = effective_date_text
+            THEN to_date(effective_date_text, 'YYYY-MM-DD')
+        END AS effective_date,
+        CASE
+            WHEN paid_to_date_text ~ '^\\d{4}-\\d{2}-\\d{2}$'
+             AND to_char(to_date(paid_to_date_text, 'YYYY-MM-DD'), 'YYYY-MM-DD') = paid_to_date_text
+            THEN to_date(paid_to_date_text, 'YYYY-MM-DD')
+        END AS paid_to_date,
+        CASE
+            WHEN last_activity_date_text ~ '^\\d{4}-\\d{2}-\\d{2}$'
+             AND to_char(to_date(last_activity_date_text, 'YYYY-MM-DD'), 'YYYY-MM-DD') = last_activity_date_text
+            THEN to_date(last_activity_date_text, 'YYYY-MM-DD')
+        END AS last_activity_date,
+        _source_file,
+        _dlt_load_id,
+        _dlt_id,
+        CASE
+            WHEN file_date_text IS NOT NULL
+            THEN to_date(replace(file_date_text, '_', '-'), 'YYYY-MM-DD')
+        END AS file_date
+    FROM base
+)
+SELECT *
 FROM typed_rows
 """
