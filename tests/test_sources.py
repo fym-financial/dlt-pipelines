@@ -569,6 +569,23 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         query.startswith("INSERT INTO typed.unl_weekly_advance_statements")
         for query in executed_sql
     )
+    assert any(
+        query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_at_risk_episodes")
+        for query in executed_sql
+    )
+    assert "TRUNCATE TABLE typed.unl_fym_policy_at_risk_episodes" in executed_sql
+    episode_insert_sql = next(
+        query
+        for query in executed_sql
+        if query.startswith("INSERT INTO typed.unl_fym_policy_at_risk_episodes")
+    )
+    assert "FROM typed.unl_fym_policy" in episode_insert_sql
+    assert "WHERE file_date >= DATE '2026-05-14'" in episode_insert_sql
+    assert "AND at_risk_policy = true" in episode_insert_sql
+    assert "d.file_date > e.ep_end" in episode_insert_sql
+    assert "d.file_date <= e.ep_end + 7" in episode_insert_sql
+    assert "left_censored" in episode_insert_sql
+    assert "ended_no_resolution" in episode_insert_sql
     weekly_advance_insert_sql = next(
         query
         for query in executed_sql
@@ -616,11 +633,36 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     assert any(
         "ON typed.unl_weekly_advance_statements (file_date)" in query for query in executed_sql
     )
+    assert any(
+        "ON typed.unl_fym_policy (policy_nbr, file_date) INCLUDE (paid_to_date)"
+        in query
+        for query in executed_sql
+    )
+    assert any(
+        "ON typed.unl_fym_policy (policy_nbr, file_date) "
+        "INCLUDE (paid_to_date, cntrct_code)" in query
+        for query in executed_sql
+    )
+    assert any(
+        "ON typed.unl_fym_policy_at_risk_episodes (policy_nbr, episode_id)" in query
+        for query in executed_sql
+    )
+    assert any(
+        "ON typed.unl_fym_policy_at_risk_episodes (outcome)" in query
+        for query in executed_sql
+    )
     assert "GRANT SELECT ON raw.unl_fym_policy_latest_load TO unl_fym_policy_reader" in executed_sql
     assert (
         "GRANT SELECT ON raw.unl_weekly_advance_statements_latest_load TO unl_fym_policy_reader"
         in executed_sql
     )
+    assert "GRANT CONNECT ON DATABASE fym_prod TO unl_fym_policy_reader" in executed_sql
+    assert "GRANT USAGE ON SCHEMA public TO unl_fym_policy_reader" in executed_sql
+    assert "GRANT SELECT ON ALL TABLES IN SCHEMA public TO unl_fym_policy_reader" in executed_sql
+    assert (
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+        "GRANT SELECT ON TABLES TO unl_fym_policy_reader"
+    ) in executed_sql
     assert calls["execute"][-1] == "SELECT count(*) FROM typed.unl_fym_policy"
 
 

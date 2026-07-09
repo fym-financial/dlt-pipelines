@@ -488,6 +488,7 @@ def _roster_snapshot_index_statements() -> tuple[str, ...]:
 def _typed_refresh_statements() -> tuple[str, ...]:
     fym_policy_typed_select = _unl_fym_policy_typed_select()
     weekly_advance_typed_select = _unl_weekly_advance_statements_typed_select()
+    at_risk_episode_select = _unl_fym_policy_at_risk_episode_select()
     return (
         "CREATE SCHEMA IF NOT EXISTS typed",
         f"CREATE TABLE IF NOT EXISTS typed.unl_fym_policy AS {fym_policy_typed_select} WITH NO DATA",
@@ -537,6 +538,42 @@ def _typed_refresh_statements() -> tuple[str, ...]:
             "WHERE at_risk_policy = true"
         ),
         (
+            "CREATE INDEX IF NOT EXISTS idx_unl_fym_policy_at_risk_episode "
+            "ON typed.unl_fym_policy (policy_nbr, file_date) "
+            "INCLUDE (paid_to_date) "
+            "WHERE billing_mode = 3 "
+            "AND billing_form = 'DIR' "
+            "AND cntrct_code = 'A' "
+            "AND paid_to_date IS NOT NULL"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_unl_fym_policy_policy_file_outcome "
+            "ON typed.unl_fym_policy (policy_nbr, file_date) "
+            "INCLUDE (paid_to_date, cntrct_code)"
+        ),
+        (
+            "CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_at_risk_episodes AS "
+            f"{at_risk_episode_select} WITH NO DATA"
+        ),
+        "TRUNCATE TABLE typed.unl_fym_policy_at_risk_episodes",
+        f"INSERT INTO typed.unl_fym_policy_at_risk_episodes {at_risk_episode_select}",
+        (
+            "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_at_risk_episodes_pk "
+            "ON typed.unl_fym_policy_at_risk_episodes (policy_nbr, episode_id)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS unl_fym_policy_at_risk_episodes_policy_idx "
+            "ON typed.unl_fym_policy_at_risk_episodes (policy_nbr)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS unl_fym_policy_at_risk_episodes_outcome_idx "
+            "ON typed.unl_fym_policy_at_risk_episodes (outcome)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS unl_fym_policy_at_risk_episodes_start_idx "
+            "ON typed.unl_fym_policy_at_risk_episodes (ep_start)"
+        ),
+        (
             "CREATE UNIQUE INDEX IF NOT EXISTS unl_weekly_advance_statements_typed_dlt_id_idx "
             "ON typed.unl_weekly_advance_statements (_dlt_id)"
         ),
@@ -560,6 +597,13 @@ def _typed_refresh_statements() -> tuple[str, ...]:
             "CREATE INDEX IF NOT EXISTS unl_weekly_advance_statements_typed_effective_date_idx "
             "ON typed.unl_weekly_advance_statements (effective_date)"
         ),
+        "GRANT CONNECT ON DATABASE fym_prod TO unl_fym_policy_reader",
+        "GRANT USAGE ON SCHEMA public TO unl_fym_policy_reader",
+        "GRANT SELECT ON ALL TABLES IN SCHEMA public TO unl_fym_policy_reader",
+        (
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+            "GRANT SELECT ON TABLES TO unl_fym_policy_reader"
+        ),
         "GRANT USAGE ON SCHEMA raw TO unl_fym_policy_reader",
         "GRANT SELECT ON raw.unl_fym_policy_latest_load TO unl_fym_policy_reader",
         "GRANT SELECT ON raw.unl_weekly_advance_statements_latest_load TO unl_fym_policy_reader",
@@ -570,6 +614,7 @@ def _typed_refresh_statements() -> tuple[str, ...]:
             "GRANT SELECT ON TABLES TO unl_fym_policy_reader"
         ),
         "ANALYZE typed.unl_fym_policy",
+        "ANALYZE typed.unl_fym_policy_at_risk_episodes",
         "ANALYZE typed.unl_weekly_advance_statements",
     )
 
@@ -869,6 +914,100 @@ SELECT
         AND paid_to_date < file_date
     ) AS at_risk_policy
 FROM typed_rows
+"""
+
+
+def _unl_fym_policy_at_risk_episode_select() -> str:
+    return """
+WITH file_bounds AS (
+    SELECT
+        MIN(file_date) AS first_file_date,
+        MAX(file_date) AS last_file_date
+    FROM typed.unl_fym_policy
+    WHERE file_date >= DATE '2026-05-14'
+),
+atrisk AS (
+    SELECT
+        policy_nbr,
+        file_date
+    FROM typed.unl_fym_policy
+    WHERE file_date >= DATE '2026-05-14'
+      AND at_risk_policy = true
+      AND policy_nbr IS NOT NULL
+),
+seq AS (
+    SELECT
+        policy_nbr,
+        file_date,
+        file_date - LAG(file_date) OVER (
+            PARTITION BY policy_nbr
+            ORDER BY file_date
+        ) AS gap
+    FROM atrisk
+),
+marked AS (
+    SELECT
+        policy_nbr,
+        file_date,
+        SUM(CASE WHEN gap IS NULL OR gap > 7 THEN 1 ELSE 0 END) OVER (
+            PARTITION BY policy_nbr
+            ORDER BY file_date
+        ) AS episode_id
+    FROM seq
+),
+episodes AS (
+    SELECT
+        policy_nbr,
+        episode_id,
+        MIN(file_date) AS ep_start,
+        MAX(file_date) AS ep_end
+    FROM marked
+    GROUP BY
+        policy_nbr,
+        episode_id
+),
+ep_outcomes AS (
+    SELECT
+        e.policy_nbr,
+        e.episode_id,
+        e.ep_start,
+        e.ep_end,
+        MIN(d.file_date) FILTER (
+            WHERE d.paid_to_date IS NOT NULL
+              AND d.paid_to_date >= d.file_date
+        ) AS cure_date,
+        MIN(d.file_date) FILTER (
+            WHERE d.cntrct_code = 'T'
+        ) AS term_date
+    FROM episodes e
+    LEFT JOIN typed.unl_fym_policy d
+      ON d.policy_nbr = e.policy_nbr
+     AND d.file_date > e.ep_end
+     AND d.file_date <= e.ep_end + 7
+    GROUP BY
+        e.policy_nbr,
+        e.episode_id,
+        e.ep_start,
+        e.ep_end
+)
+SELECT
+    ep_outcomes.policy_nbr,
+    ep_outcomes.episode_id,
+    ep_outcomes.ep_start,
+    ep_outcomes.ep_end,
+    ep_outcomes.cure_date,
+    ep_outcomes.term_date,
+    CASE
+        WHEN ep_outcomes.ep_start = file_bounds.first_file_date THEN 'left_censored'
+        WHEN ep_outcomes.cure_date IS NOT NULL
+         AND (ep_outcomes.term_date IS NULL OR ep_outcomes.cure_date <= ep_outcomes.term_date)
+            THEN 'saved'
+        WHEN ep_outcomes.term_date IS NOT NULL THEN 'lost'
+        WHEN ep_outcomes.ep_end >= file_bounds.last_file_date - 7 THEN 'still_open'
+        ELSE 'ended_no_resolution'
+    END AS outcome
+FROM ep_outcomes
+CROSS JOIN file_bounds
 """
 
 

@@ -194,8 +194,10 @@ Expected outcome:
 3. `loaded_to_postgres` audit rows are recorded.
 4. `typed.unl_fym_policy` and `typed.unl_weekly_advance_statements` are
    refreshed from the matching `raw` tables.
-5. After a successful load, files are moved into `Archive` subdirectories.
-6. `archived` audit rows are recorded.
+5. `typed.unl_fym_policy_at_risk_episodes` is rebuilt from
+   `typed.unl_fym_policy` for save-rate reporting.
+6. After a successful load, files are moved into `Archive` subdirectories.
+7. `archived` audit rows are recorded.
 
 Archive paths are created beside each file's current directory:
 
@@ -277,8 +279,10 @@ Expected outcome:
 3. Landed files are routed and loaded into PostgreSQL.
 4. `typed.unl_fym_policy` and `typed.unl_weekly_advance_statements` are
    refreshed from the matching `raw` tables.
-5. Successfully loaded files are moved into Archive subdirectories.
-6. Audit rows are recorded for move, load, and archive stages.
+5. `typed.unl_fym_policy_at_risk_episodes` is rebuilt from
+   `typed.unl_fym_policy` for save-rate reporting.
+6. Successfully loaded files are moved into Archive subdirectories.
+7. Audit rows are recorded for move, load, and archive stages.
 
 To run the full flow without refreshing the typed table:
 
