@@ -121,7 +121,11 @@ This runs a separate DLT SQL-source pipeline from `raw.unl_fym_policy` to
 `typed.unl_fym_policy`. Its first run backfills the full raw table; later runs
 use `raw_dlt_load_id` as a persisted incremental cursor and merge only new rows.
 Roster snapshots and `typed.unl_weekly_advance_statements` are still rebuilt,
-and the latest-load views are migrated before the data refresh.
+and the latest-load views are migrated before the data refresh. The refresh also
+precomputes the latest policy roster JSON in
+`typed.unl_fym_policy_roster_hierarchy`; both policy latest-load views use an
+indexed join to that table instead of rebuilding the recursive hierarchy on
+every query.
 
 The FYM policy typed history and both FYM policy latest-load views include:
 

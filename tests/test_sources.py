@@ -687,6 +687,46 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     assert "at_risk_policy IS DISTINCT FROM previous_at_risk_observation" in history_insert_sql
     assert "at_risk_status_last_change_date" in history_insert_sql
     assert any(
+        query.startswith(
+            "CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_roster_hierarchy"
+        )
+        for query in executed_sql
+    )
+    roster_hierarchy_refresh_sql = next(
+        query
+        for query in executed_sql
+        if query.startswith("CREATE TEMP TABLE unl_fym_policy_roster_hierarchy_refresh")
+    )
+    assert "WITH RECURSIVE latest_file AS" in roster_hierarchy_refresh_sql
+    assert "coalesce(p.raw_dlt_id, p._dlt_id) AS source_dlt_id" in (
+        roster_hierarchy_refresh_sql
+    )
+    assert "nullif(trim(levels.writing_number::text), '') AS writing_number" in (
+        roster_hierarchy_refresh_sql
+    )
+    assert "trim(agency_carrier.writing_number) = levels.writing_number" in (
+        roster_hierarchy_refresh_sql
+    )
+    assert "trim(agent_carrier.writing_number) = levels.writing_number" in (
+        roster_hierarchy_refresh_sql
+    )
+    assert "ORDER BY traversal_depth DESC" in roster_hierarchy_refresh_sql
+    assert "lpad(hierarchy_level::text, 2, '0')" in roster_hierarchy_refresh_sql
+    roster_hierarchy_upsert_sql = next(
+        query
+        for query in executed_sql
+        if query.startswith("INSERT INTO typed.unl_fym_policy_roster_hierarchy")
+    )
+    assert "ON CONFLICT (_dlt_id) DO UPDATE" in roster_hierarchy_upsert_sql
+    assert "roster_hierarchy_json = EXCLUDED.roster_hierarchy_json" in (
+        roster_hierarchy_upsert_sql
+    )
+    assert any(
+        query.startswith("DELETE FROM typed.unl_fym_policy_roster_hierarchy")
+        and "pg_temp.unl_fym_policy_roster_hierarchy_refresh" in query
+        for query in executed_sql
+    )
+    assert any(
         query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements")
         for query in executed_sql
     )
@@ -737,11 +777,8 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         assert f"CREATE OR REPLACE VIEW {schema_name}.unl_fym_policy_latest_load" in latest_load_sql
         assert f"FROM {schema_name}.unl_fym_policy AS p" in latest_load_sql
         assert "roster_hierarchy_json" in latest_load_sql
-        assert "nullif(trim(levels.writing_number::text), '') AS writing_number" in latest_load_sql
-        assert "trim(agency_carrier.writing_number) = levels.writing_number" in latest_load_sql
-        assert "trim(agent_carrier.writing_number) = levels.writing_number" in latest_load_sql
-        assert "lpad(hierarchy_level::text, 2, '0')" in latest_load_sql
-        assert "ORDER BY traversal_depth DESC" in latest_load_sql
+        assert "WITH RECURSIVE" not in latest_load_sql
+        assert "LEFT JOIN typed.unl_fym_policy_roster_hierarchy" in latest_load_sql
         assert "LEFT JOIN typed.unl_fym_policy_change_history AS history" in latest_load_sql
         assert "history.previous_contract_code" in latest_load_sql
         assert "history.contract_code_last_change_date" in latest_load_sql
@@ -754,6 +791,10 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         assert latest_load_sql.rindex("'unl'::text AS carrier") < (
             latest_load_sql.rindex("history.previous_contract_code")
         )
+        expected_join_id = "p._dlt_id"
+        if schema_name == "typed":
+            expected_join_id = "coalesce(p.raw_dlt_id, p._dlt_id)"
+        assert f"policy_roster_hierarchy._dlt_id = {expected_join_id}" in latest_load_sql
     weekly_advance_latest_load_sql_by_schema = {
         query.split(".")[0].removeprefix("CREATE OR REPLACE VIEW "): query
         for query in executed_sql

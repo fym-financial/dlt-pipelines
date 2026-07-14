@@ -564,9 +564,33 @@ def _roster_snapshot_index_statements() -> tuple[str, ...]:
 def _typed_refresh_statements() -> tuple[str, ...]:
     weekly_advance_typed_select = _unl_weekly_advance_statements_typed_select()
     at_risk_episode_select = _unl_fym_policy_at_risk_episode_select()
+    roster_hierarchy_select = _unl_fym_policy_roster_hierarchy_select()
     return (
         _unl_fym_policy_out_of_order_history_reset_statement(),
         _unl_fym_policy_incremental_history_insert_statement(),
+        (
+            "CREATE TEMP TABLE unl_fym_policy_roster_hierarchy_refresh "
+            f"ON COMMIT DROP AS {roster_hierarchy_select}"
+        ),
+        """INSERT INTO typed.unl_fym_policy_roster_hierarchy (
+            _dlt_id,
+            roster_hierarchy_json
+        )
+        SELECT
+            _dlt_id,
+            roster_hierarchy_json
+        FROM pg_temp.unl_fym_policy_roster_hierarchy_refresh
+        WHERE true
+        ON CONFLICT (_dlt_id) DO UPDATE
+        SET roster_hierarchy_json = EXCLUDED.roster_hierarchy_json
+        """,
+        """DELETE FROM typed.unl_fym_policy_roster_hierarchy AS existing
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM pg_temp.unl_fym_policy_roster_hierarchy_refresh AS refreshed
+            WHERE refreshed._dlt_id = existing._dlt_id
+        )
+        """,
         "TRUNCATE TABLE typed.unl_weekly_advance_statements",
         f"INSERT INTO typed.unl_weekly_advance_statements {weekly_advance_typed_select}",
         (
@@ -680,6 +704,7 @@ def _typed_refresh_statements() -> tuple[str, ...]:
         ),
         "ANALYZE typed.unl_fym_policy",
         "ANALYZE typed.unl_fym_policy_change_history",
+        "ANALYZE typed.unl_fym_policy_roster_hierarchy",
         "ANALYZE typed.unl_fym_policy_at_risk_episodes",
         "ANALYZE typed.unl_weekly_advance_statements",
     )
@@ -707,6 +732,10 @@ def _typed_schema_and_view_statements() -> tuple[str, ...]:
             "CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history AS "
             f"{fym_policy_change_history_select} WITH NO DATA"
         ),
+        """CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_roster_hierarchy (
+            _dlt_id text PRIMARY KEY,
+            roster_hierarchy_json jsonb
+        )""",
         _at_risk_history_column_migration_statement(),
         (
             "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_change_history_dlt_id_idx "
@@ -833,18 +862,8 @@ def _unl_typed_preparation_statements() -> tuple[str, ...]:
     )
 
 
-def _unl_fym_policy_latest_load_view_statement(schema_name: str) -> str:
-    history_join_id = "p._dlt_id"
-    if schema_name == "typed":
-        history_join_id = "coalesce(p.raw_dlt_id, p._dlt_id)"
-    policy_projection = "p.*"
-    if schema_name == "typed":
-        policy_projection = ",\n    ".join(
-            f"p.{column_name}" for column_name in UNL_TYPED_POLICY_VIEW_COLUMNS
-        )
-
-    return f"""CREATE OR REPLACE VIEW {schema_name}.unl_fym_policy_latest_load AS
-WITH RECURSIVE latest_file AS (
+def _unl_fym_policy_roster_hierarchy_select() -> str:
+    return """WITH RECURSIVE latest_file AS (
     SELECT fl.file_name
     FROM audit.file_landings AS fl
     WHERE fl.provider = 'unl'
@@ -854,14 +873,25 @@ WITH RECURSIVE latest_file AS (
     LIMIT 1
 ),
 latest_policy AS (
-    SELECT p.*
-    FROM {schema_name}.unl_fym_policy AS p
+    SELECT
+        coalesce(p.raw_dlt_id, p._dlt_id) AS source_dlt_id,
+        p.agent_ga_level_01,
+        p.agent_level_02,
+        p.agent_level_03,
+        p.agent_level_04,
+        p.agent_level_05,
+        p.agent_level_06,
+        p.agent_level_07,
+        p.agent_level_08,
+        p.agent_level_09,
+        p.agent_level_10
+    FROM typed.unl_fym_policy AS p
     JOIN latest_file AS lf
       ON lf.file_name = p._source_file
 ),
 policy_levels AS (
     SELECT
-        p._dlt_id,
+        p.source_dlt_id AS _dlt_id,
         levels.level_number,
         nullif(trim(levels.writing_number::text), '') AS writing_number
     FROM latest_policy AS p
@@ -969,25 +999,52 @@ renumbered_upline AS (
         writing_number,
         is_person
     FROM recursive_upline
+)
+SELECT
+    _dlt_id,
+    jsonb_agg(
+        jsonb_build_object(
+            'depth',
+            lpad(hierarchy_level::text, 2, '0'),
+            'name',
+            name,
+            'writing_number',
+            writing_number,
+            'is_person',
+            is_person
+        )
+        ORDER BY hierarchy_level
+    ) AS roster_hierarchy_json
+FROM renumbered_upline
+GROUP BY _dlt_id
+"""
+
+
+def _unl_fym_policy_latest_load_view_statement(schema_name: str) -> str:
+    canonical_join_id = "p._dlt_id"
+    if schema_name == "typed":
+        canonical_join_id = "coalesce(p.raw_dlt_id, p._dlt_id)"
+    policy_projection = "p.*"
+    if schema_name == "typed":
+        policy_projection = ",\n    ".join(
+            f"p.{column_name}" for column_name in UNL_TYPED_POLICY_VIEW_COLUMNS
+        )
+
+    return f"""CREATE OR REPLACE VIEW {schema_name}.unl_fym_policy_latest_load AS
+WITH latest_file AS (
+    SELECT fl.file_name
+    FROM audit.file_landings AS fl
+    WHERE fl.provider = 'unl'
+      AND fl.status = 'loaded_to_postgres'
+      AND fl.file_name LIKE 'FYM_Policy_%.csv'
+    ORDER BY fl.landed_at DESC, fl.file_name DESC
+    LIMIT 1
 ),
-policy_roster_hierarchy AS (
-    SELECT
-        _dlt_id,
-        jsonb_agg(
-            jsonb_build_object(
-                'depth',
-                lpad(hierarchy_level::text, 2, '0'),
-                'name',
-                name,
-                'writing_number',
-                writing_number,
-                'is_person',
-                is_person
-            )
-            ORDER BY hierarchy_level
-        ) AS roster_hierarchy_json
-    FROM renumbered_upline
-    GROUP BY _dlt_id
+latest_policy AS (
+    SELECT p.*
+    FROM {schema_name}.unl_fym_policy AS p
+    JOIN latest_file AS lf
+      ON lf.file_name = p._source_file
 )
 SELECT
     {policy_projection},
@@ -998,10 +1055,10 @@ SELECT
     history.previous_at_risk_status,
     history.at_risk_status_last_change_date
 FROM latest_policy AS p
-LEFT JOIN policy_roster_hierarchy
-  ON policy_roster_hierarchy._dlt_id = p._dlt_id
+LEFT JOIN typed.unl_fym_policy_roster_hierarchy AS policy_roster_hierarchy
+  ON policy_roster_hierarchy._dlt_id = {canonical_join_id}
 LEFT JOIN typed.unl_fym_policy_change_history AS history
-  ON history._dlt_id = {history_join_id}
+  ON history._dlt_id = {canonical_join_id}
 """
 
 
