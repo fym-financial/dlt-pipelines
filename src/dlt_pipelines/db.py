@@ -487,13 +487,23 @@ def _roster_snapshot_index_statements() -> tuple[str, ...]:
 
 def _typed_refresh_statements() -> tuple[str, ...]:
     fym_policy_typed_select = _unl_fym_policy_typed_select()
+    fym_policy_change_history_select = _unl_fym_policy_change_history_select()
     weekly_advance_typed_select = _unl_weekly_advance_statements_typed_select()
     at_risk_episode_select = _unl_fym_policy_at_risk_episode_select()
     return (
         "CREATE SCHEMA IF NOT EXISTS typed",
         f"CREATE TABLE IF NOT EXISTS typed.unl_fym_policy AS {fym_policy_typed_select} WITH NO DATA",
+        (
+            "CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history AS "
+            f"{fym_policy_change_history_select} WITH NO DATA"
+        ),
         "TRUNCATE TABLE typed.unl_fym_policy",
         f"INSERT INTO typed.unl_fym_policy {fym_policy_typed_select}",
+        "TRUNCATE TABLE typed.unl_fym_policy_change_history",
+        (
+            "INSERT INTO typed.unl_fym_policy_change_history "
+            f"{fym_policy_change_history_select}"
+        ),
         (
             "CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements AS "
             f"{weekly_advance_typed_select} WITH NO DATA"
@@ -507,6 +517,10 @@ def _typed_refresh_statements() -> tuple[str, ...]:
         (
             "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_typed_dlt_id_idx "
             "ON typed.unl_fym_policy (_dlt_id)"
+        ),
+        (
+            "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_change_history_dlt_id_idx "
+            "ON typed.unl_fym_policy_change_history (_dlt_id)"
         ),
         (
             "CREATE INDEX IF NOT EXISTS unl_fym_policy_typed_source_file_idx "
@@ -614,6 +628,7 @@ def _typed_refresh_statements() -> tuple[str, ...]:
             "GRANT SELECT ON TABLES TO unl_fym_policy_reader"
         ),
         "ANALYZE typed.unl_fym_policy",
+        "ANALYZE typed.unl_fym_policy_change_history",
         "ANALYZE typed.unl_fym_policy_at_risk_episodes",
         "ANALYZE typed.unl_weekly_advance_statements",
     )
@@ -768,10 +783,16 @@ policy_roster_hierarchy AS (
 )
 SELECT
     p.*,
-    policy_roster_hierarchy.roster_hierarchy_json
+    policy_roster_hierarchy.roster_hierarchy_json,
+    history.previous_contract_code,
+    history.contract_code_last_change_date,
+    history.previous_at_risk_status,
+    history.at_risk_policy_last_change_date
 FROM latest_policy AS p
 LEFT JOIN policy_roster_hierarchy
   ON policy_roster_hierarchy._dlt_id = p._dlt_id
+JOIN typed.unl_fym_policy_change_history AS history
+  ON history._dlt_id = p._dlt_id
 """
 
 
@@ -914,6 +935,62 @@ SELECT
         AND paid_to_date < file_date
     ) AS at_risk_policy
 FROM typed_rows
+"""
+
+
+def _unl_fym_policy_change_history_select() -> str:
+    return """
+WITH sequenced_rows AS (
+    SELECT
+        policy_nbr,
+        file_date,
+        _source_file,
+        _dlt_id,
+        cntrct_code,
+        at_risk_policy,
+        row_number() OVER history_window AS observation_number,
+        lag(cntrct_code) OVER history_window AS previous_contract_observation,
+        lag(at_risk_policy) OVER history_window AS previous_at_risk_observation
+    FROM typed.unl_fym_policy
+    WINDOW history_window AS (
+        PARTITION BY policy_nbr
+        ORDER BY file_date, _source_file, _dlt_id
+    )
+),
+history_rows AS (
+    SELECT
+        sequenced_rows.*,
+        array_agg(previous_contract_observation) FILTER (
+            WHERE observation_number > 1
+              AND cntrct_code IS DISTINCT FROM previous_contract_observation
+        ) OVER history_window AS previous_contract_codes,
+        max(file_date) FILTER (
+            WHERE observation_number > 1
+              AND cntrct_code IS DISTINCT FROM previous_contract_observation
+        ) OVER history_window AS contract_code_last_change_date,
+        array_agg(previous_at_risk_observation) FILTER (
+            WHERE observation_number > 1
+              AND at_risk_policy IS DISTINCT FROM previous_at_risk_observation
+        ) OVER history_window AS previous_at_risk_statuses,
+        max(file_date) FILTER (
+            WHERE observation_number > 1
+              AND at_risk_policy IS DISTINCT FROM previous_at_risk_observation
+        ) OVER history_window AS at_risk_policy_last_change_date
+    FROM sequenced_rows
+    WINDOW history_window AS (
+        PARTITION BY policy_nbr
+        ORDER BY file_date, _source_file, _dlt_id
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    )
+)
+SELECT
+    _dlt_id,
+    previous_contract_codes[cardinality(previous_contract_codes)] AS previous_contract_code,
+    contract_code_last_change_date,
+    previous_at_risk_statuses[cardinality(previous_at_risk_statuses)]
+        AS previous_at_risk_status,
+    at_risk_policy_last_change_date
+FROM history_rows
 """
 
 

@@ -121,6 +121,16 @@ This also refreshes roster snapshots, rebuilds `typed.unl_fym_policy` and
 `typed.unl_weekly_advance_statements`, and recreates latest-load views for both
 raw and typed FYM policy and weekly advance data.
 
+The FYM policy typed history and both FYM policy latest-load views include:
+
+- `previous_contract_code` and `contract_code_last_change_date`
+- `previous_at_risk_status` and `at_risk_policy_last_change_date`
+
+The previous value is the value immediately before the most recent observed
+change for that policy. Both fields in a pair are null until a change is
+observed. Change history is calculated once during the typed refresh so reads
+from the latest-load views do not rescan all raw loads.
+
 After a successful `load-s3`, matching landed files are moved into an `Archive`
 subdirectory beside their current B2/S3 location.
 

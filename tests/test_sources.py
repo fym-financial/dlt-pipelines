@@ -558,6 +558,27 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     assert any(query.startswith("TRUNCATE TABLE typed.unl_fym_policy") for query in executed_sql)
     assert any(query.startswith("INSERT INTO typed.unl_fym_policy") for query in executed_sql)
     assert any(
+        query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history")
+        for query in executed_sql
+    )
+    assert "TRUNCATE TABLE typed.unl_fym_policy_change_history" in executed_sql
+    history_insert_sql = next(
+        query
+        for query in executed_sql
+        if query.startswith("INSERT INTO typed.unl_fym_policy_change_history")
+    )
+    assert "FROM typed.unl_fym_policy" in history_insert_sql
+    assert "AS previous_contract_code" in history_insert_sql
+    assert "AS contract_code_last_change_date" in history_insert_sql
+    assert "AS previous_at_risk_status" in history_insert_sql
+    assert "AS at_risk_policy_last_change_date" in history_insert_sql
+    assert "lag(cntrct_code) OVER history_window" in history_insert_sql
+    assert "lag(at_risk_policy) OVER history_window" in history_insert_sql
+    assert "array_agg(previous_contract_observation) FILTER" in history_insert_sql
+    assert "cntrct_code IS DISTINCT FROM previous_contract_observation" in history_insert_sql
+    assert "array_agg(previous_at_risk_observation) FILTER" in history_insert_sql
+    assert "at_risk_policy IS DISTINCT FROM previous_at_risk_observation" in history_insert_sql
+    assert any(
         query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements")
         for query in executed_sql
     )
@@ -601,7 +622,7 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         query.split(".")[0].removeprefix("CREATE OR REPLACE VIEW "): query
         for query in executed_sql
         if query.startswith("CREATE OR REPLACE VIEW ")
-        and query.endswith("ON policy_roster_hierarchy._dlt_id = p._dlt_id\n")
+        and "unl_fym_policy_latest_load" in query
     }
     assert sorted(latest_load_sql_by_schema) == ["raw", "typed"]
     for schema_name, latest_load_sql in latest_load_sql_by_schema.items():
@@ -613,6 +634,14 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         assert "trim(agent_carrier.writing_number) = levels.writing_number" in latest_load_sql
         assert "lpad(hierarchy_level::text, 2, '0')" in latest_load_sql
         assert "ORDER BY traversal_depth DESC" in latest_load_sql
+        assert "JOIN typed.unl_fym_policy_change_history AS history" in latest_load_sql
+        assert "history.previous_contract_code" in latest_load_sql
+        assert "history.contract_code_last_change_date" in latest_load_sql
+        assert "history.previous_at_risk_status" in latest_load_sql
+        assert "history.at_risk_policy_last_change_date" in latest_load_sql
+        assert latest_load_sql.rindex("policy_roster_hierarchy.roster_hierarchy_json") < (
+            latest_load_sql.rindex("history.previous_contract_code")
+        )
     weekly_advance_latest_load_sql_by_schema = {
         query.split(".")[0].removeprefix("CREATE OR REPLACE VIEW "): query
         for query in executed_sql
@@ -629,6 +658,9 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         assert "fl.file_name LIKE 'WA_%.csv'" in latest_load_sql
     assert any(
         "ON typed.unl_weekly_advance_statements (_dlt_id)" in query for query in executed_sql
+    )
+    assert any(
+        "ON typed.unl_fym_policy_change_history (_dlt_id)" in query for query in executed_sql
     )
     assert any(
         "ON typed.unl_weekly_advance_statements (file_date)" in query for query in executed_sql
