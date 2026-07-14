@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import json
+from urllib.error import HTTPError
 
 from dlt_pipelines.db import (
     FileAuditEvent,
@@ -68,6 +69,8 @@ def test_heartland_source_logs_in_and_fetches_policy_snapshot(monkeypatch) -> No
     assert login_request.full_url == "https://heartland.test/api/auth/login"
     assert login_request.method == "POST"
     assert login_timeout == 30
+    assert login_request.get_header("User-agent") == "curl/8.7.1"
+    assert login_request.get_header("Accept") == "*/*"
     assert json.loads(login_request.data) == {
         "Username": "FYMUser",
         "Password": "secret",
@@ -77,7 +80,35 @@ def test_heartland_source_logs_in_and_fetches_policy_snapshot(monkeypatch) -> No
     assert policy_request.full_url == "https://heartland.test/api/FYM/GetPolicies"
     assert policy_request.method == "GET"
     assert policy_request.get_header("Authorization") == "Bearer test-token"
+    assert policy_request.get_header("User-agent") == "curl/8.7.1"
+    assert policy_request.get_header("Accept") == "*/*"
     assert policy_timeout == 60
+
+
+def test_heartland_source_identifies_login_http_errors(monkeypatch) -> None:
+    def forbidden(request, timeout):
+        raise HTTPError(
+            request.full_url,
+            403,
+            "Forbidden",
+            hdrs=None,
+            fp=BytesIO(b"request blocked"),
+        )
+
+    monkeypatch.setattr(api, "urlopen", forbidden)
+
+    try:
+        list(
+            heartland_inforced_policies(
+                username="FYMUser",
+                password="secret",
+                base_url="https://heartland.test",
+            )
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "Heartland login failed with HTTP 403: request blocked"
+    else:
+        raise AssertionError("Expected the Heartland login request to fail")
 
 
 def test_heartland_typed_select_applies_conservative_types() -> None:

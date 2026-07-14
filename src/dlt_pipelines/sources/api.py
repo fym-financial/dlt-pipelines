@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import dlt
@@ -52,6 +53,10 @@ HEARTLAND_POLICY_FIELDS = (
 HEARTLAND_TEXT_COLUMNS = {
     field: {"data_type": "text", "nullable": True} for field in HEARTLAND_POLICY_FIELDS
 }
+HEARTLAND_CURL_HEADERS = {
+    "Accept": "*/*",
+    "User-Agent": "curl/8.7.1",
+}
 
 
 @dlt.resource(name="posts", write_disposition="replace")
@@ -97,10 +102,10 @@ def heartland_inforced_policies(
     login_request = Request(
         f"{base_url}/api/auth/login",
         data=login_body,
-        headers={"Content-Type": "application/json"},
+        headers={**HEARTLAND_CURL_HEADERS, "Content-Type": "application/json"},
         method="POST",
     )
-    with urlopen(login_request, timeout=30) as response:
+    with _open_heartland(login_request, timeout=30, operation="login") as response:
         token = response.read().decode().strip().strip('"')
     if not token:
         raise RuntimeError("Heartland login returned an empty token.")
@@ -108,12 +113,16 @@ def heartland_inforced_policies(
     policy_request = Request(
         f"{base_url}/api/FYM/GetPolicies",
         headers={
-            "Accept": "application/json",
+            **HEARTLAND_CURL_HEADERS,
             "Authorization": f"Bearer {token}",
         },
         method="GET",
     )
-    with urlopen(policy_request, timeout=60) as response:
+    with _open_heartland(
+        policy_request,
+        timeout=60,
+        operation="policy fetch",
+    ) as response:
         rows = json.load(response)
 
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
@@ -126,6 +135,17 @@ def heartland_inforced_policies(
         }
         for row in rows
     ]
+
+
+def _open_heartland(request: Request, *, timeout: int, operation: str):
+    try:
+        return urlopen(request, timeout=timeout)
+    except HTTPError as exc:
+        response_body = exc.read(500).decode(errors="replace").strip()
+        detail = f": {response_body}" if response_body else ""
+        raise RuntimeError(
+            f"Heartland {operation} failed with HTTP {exc.code}{detail}"
+        ) from exc
 
 
 def _heartland_setting(
