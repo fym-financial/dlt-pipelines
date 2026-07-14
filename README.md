@@ -188,12 +188,7 @@ secrets in Infisical and inject them as environment variables at runtime:
 
 | Infisical secret name | Required | Local baseline value | Notes |
 | --- | --- | --- | --- |
-| `DESTINATION__POSTGRES__CREDENTIALS__DATABASE` | Yes | `dlt_data` | PostgreSQL database name. |
-| `DESTINATION__POSTGRES__CREDENTIALS__USERNAME` | Yes | `loader` | PostgreSQL user. |
-| `DESTINATION__POSTGRES__CREDENTIALS__PASSWORD` | Yes | `loader` | Use the real password outside local dev. |
-| `DESTINATION__POSTGRES__CREDENTIALS__HOST` | Yes | `localhost` | Use the service host in deployed environments. |
-| `DESTINATION__POSTGRES__CREDENTIALS__PORT` | Yes | `5432` | PostgreSQL port. |
-| `DESTINATION__POSTGRES__CREDENTIALS__CONNECT_TIMEOUT` | No | `15` | Connection timeout in seconds. |
+| `DESTINATION__POSTGRES__CREDENTIALS` | Yes | `postgresql://loader:loader@localhost:5432/dlt_data` | The single destination connection string used by every pipeline and direct database operation. |
 
 The Heartland API load uses these secrets:
 
@@ -303,15 +298,11 @@ Do not use one catch-all table for mixed schemas unless the business decision is
 to store raw records as semi-structured JSON. The default project behavior is to
 load each known file type into its own table.
 
-You can also set the PostgreSQL credentials as one connection string instead of
-the individual fields:
+All pipelines use the same PostgreSQL connection string:
 
 ```bash
 DESTINATION__POSTGRES__CREDENTIALS=postgresql://loader:loader@localhost:5432/dlt_data
 ```
-
-Prefer the split-field secrets when possible. They are easier to rotate and
-less error-prone when host, user, or password changes independently.
 
 Run a pipeline through Infisical:
 

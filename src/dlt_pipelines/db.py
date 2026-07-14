@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import PurePosixPath
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, quote_plus, unquote, urlsplit
 
 import psycopg2
 from psycopg2 import sql
@@ -445,15 +445,46 @@ def _connect_roster_source():
 
 
 def _postgres_setting(name: str, *, default: str | None = None) -> str:
-    value = get_setting(
-        f"DESTINATION__POSTGRES__CREDENTIALS__{name.upper()}",
-        ("destination", "postgres", "credentials", name),
-        default=default,
-        required=default is None,
+    connection_settings = _postgres_connection_string_settings()
+    if name in connection_settings:
+        return connection_settings[name]
+
+    if default is not None:
+        return default
+    raise RuntimeError(
+        f"Missing PostgreSQL setting '{name}' in DESTINATION__POSTGRES__CREDENTIALS."
     )
-    if value is None:
-        raise RuntimeError(f"Missing PostgreSQL setting: {name}")
-    return value
+
+
+def _postgres_connection_string_settings() -> dict[str, str]:
+    credentials = get_setting(
+        "DESTINATION__POSTGRES__CREDENTIALS",
+        ("destination", "postgres", "credentials"),
+    )
+    if not credentials or "://" not in credentials:
+        return {}
+
+    parsed = urlsplit(credentials.replace("postgresql+psycopg2://", "postgresql://", 1))
+    if parsed.scheme not in {"postgres", "postgresql"}:
+        raise RuntimeError(
+            "DESTINATION__POSTGRES__CREDENTIALS must use postgres:// or postgresql://."
+        )
+
+    settings: dict[str, str] = {}
+    if parsed.username is not None:
+        settings["username"] = unquote(parsed.username)
+    if parsed.password is not None:
+        settings["password"] = unquote(parsed.password)
+    if parsed.hostname is not None:
+        settings["host"] = parsed.hostname
+    settings["port"] = str(parsed.port or 5432)
+    if parsed.path and parsed.path != "/":
+        settings["database"] = unquote(parsed.path.removeprefix("/"))
+
+    query = parse_qs(parsed.query)
+    if query.get("connect_timeout"):
+        settings["connect_timeout"] = query["connect_timeout"][-1]
+    return settings
 
 
 def _roster_postgres_setting(name: str, *, default: str | None = None) -> str:
