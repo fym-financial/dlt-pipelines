@@ -295,6 +295,11 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
     connection = _connect()
     try:
         with connection.cursor() as cursor:
+            for statement in _typed_schema_and_view_statements():
+                cursor.execute(statement)
+        connection.commit()
+
+        with connection.cursor() as cursor:
             _refresh_roster_snapshots(connection)
             for statement in _typed_refresh_statements():
                 cursor.execute(statement)
@@ -491,12 +496,6 @@ def _typed_refresh_statements() -> tuple[str, ...]:
     weekly_advance_typed_select = _unl_weekly_advance_statements_typed_select()
     at_risk_episode_select = _unl_fym_policy_at_risk_episode_select()
     return (
-        "CREATE SCHEMA IF NOT EXISTS typed",
-        f"CREATE TABLE IF NOT EXISTS typed.unl_fym_policy AS {fym_policy_typed_select} WITH NO DATA",
-        (
-            "CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history AS "
-            f"{fym_policy_change_history_select} WITH NO DATA"
-        ),
         "TRUNCATE TABLE typed.unl_fym_policy",
         f"INSERT INTO typed.unl_fym_policy {fym_policy_typed_select}",
         "TRUNCATE TABLE typed.unl_fym_policy_change_history",
@@ -504,16 +503,8 @@ def _typed_refresh_statements() -> tuple[str, ...]:
             "INSERT INTO typed.unl_fym_policy_change_history "
             f"{fym_policy_change_history_select}"
         ),
-        (
-            "CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements AS "
-            f"{weekly_advance_typed_select} WITH NO DATA"
-        ),
         "TRUNCATE TABLE typed.unl_weekly_advance_statements",
         f"INSERT INTO typed.unl_weekly_advance_statements {weekly_advance_typed_select}",
-        _unl_fym_policy_latest_load_view_statement("raw"),
-        _unl_fym_policy_latest_load_view_statement("typed"),
-        _unl_weekly_advance_latest_load_view_statement("raw"),
-        _unl_weekly_advance_latest_load_view_statement("typed"),
         (
             "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_typed_dlt_id_idx "
             "ON typed.unl_fym_policy (_dlt_id)"
@@ -631,6 +622,28 @@ def _typed_refresh_statements() -> tuple[str, ...]:
         "ANALYZE typed.unl_fym_policy_change_history",
         "ANALYZE typed.unl_fym_policy_at_risk_episodes",
         "ANALYZE typed.unl_weekly_advance_statements",
+    )
+
+
+def _typed_schema_and_view_statements() -> tuple[str, ...]:
+    fym_policy_typed_select = _unl_fym_policy_typed_select()
+    fym_policy_change_history_select = _unl_fym_policy_change_history_select()
+    weekly_advance_typed_select = _unl_weekly_advance_statements_typed_select()
+    return (
+        "CREATE SCHEMA IF NOT EXISTS typed",
+        f"CREATE TABLE IF NOT EXISTS typed.unl_fym_policy AS {fym_policy_typed_select} WITH NO DATA",
+        (
+            "CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history AS "
+            f"{fym_policy_change_history_select} WITH NO DATA"
+        ),
+        (
+            "CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements AS "
+            f"{weekly_advance_typed_select} WITH NO DATA"
+        ),
+        _unl_fym_policy_latest_load_view_statement("raw"),
+        _unl_fym_policy_latest_load_view_statement("typed"),
+        _unl_weekly_advance_latest_load_view_statement("raw"),
+        _unl_weekly_advance_latest_load_view_statement("typed"),
     )
 
 
@@ -792,7 +805,7 @@ SELECT
 FROM latest_policy AS p
 LEFT JOIN policy_roster_hierarchy
   ON policy_roster_hierarchy._dlt_id = p._dlt_id
-JOIN typed.unl_fym_policy_change_history AS history
+LEFT JOIN typed.unl_fym_policy_change_history AS history
   ON history._dlt_id = p._dlt_id
 """
 

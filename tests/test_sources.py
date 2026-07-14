@@ -510,7 +510,7 @@ def test_check_unl_fym_policy_loaded_reports_stale(monkeypatch) -> None:
 
 
 def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
-    calls = {"execute": [], "copy": []}
+    calls = {"execute": [], "copy": [], "commit_at": []}
 
     class FakeCursor:
         def __enter__(self) -> "FakeCursor":
@@ -533,7 +533,7 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
             return FakeCursor()
 
         def commit(self) -> None:
-            calls["commit"] = True
+            calls["commit_at"].append(len(calls["execute"]))
 
         def rollback(self) -> None:
             calls["rollback"] = True
@@ -551,12 +551,21 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     assert result.schema_name == "typed"
     assert result.table_name == "unl_fym_policy"
     assert result.row_count == 42
-    assert calls["commit"] is True
+    assert len(calls["commit_at"]) == 2
     assert calls["closed"] is True
     assert len(calls["copy"]) == 12
     assert any(query.startswith("CREATE SCHEMA IF NOT EXISTS typed") for query in executed_sql)
     assert any(query.startswith("TRUNCATE TABLE typed.unl_fym_policy") for query in executed_sql)
     assert any(query.startswith("INSERT INTO typed.unl_fym_policy") for query in executed_sql)
+    first_commit_position = calls["commit_at"][0]
+    first_truncate_position = executed_sql.index("TRUNCATE TABLE typed.unl_fym_policy")
+    latest_view_positions = [
+        index
+        for index, query in enumerate(executed_sql)
+        if query.startswith("CREATE OR REPLACE VIEW ")
+    ]
+    assert latest_view_positions
+    assert max(latest_view_positions) < first_commit_position <= first_truncate_position
     assert any(
         query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history")
         for query in executed_sql
@@ -634,7 +643,7 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         assert "trim(agent_carrier.writing_number) = levels.writing_number" in latest_load_sql
         assert "lpad(hierarchy_level::text, 2, '0')" in latest_load_sql
         assert "ORDER BY traversal_depth DESC" in latest_load_sql
-        assert "JOIN typed.unl_fym_policy_change_history AS history" in latest_load_sql
+        assert "LEFT JOIN typed.unl_fym_policy_change_history AS history" in latest_load_sql
         assert "history.previous_contract_code" in latest_load_sql
         assert "history.contract_code_last_change_date" in latest_load_sql
         assert "history.previous_at_risk_status" in latest_load_sql
