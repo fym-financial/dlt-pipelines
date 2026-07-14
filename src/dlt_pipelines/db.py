@@ -784,6 +784,7 @@ policy_roster_hierarchy AS (
 SELECT
     p.*,
     policy_roster_hierarchy.roster_hierarchy_json,
+    'unl'::text AS carrier,
     history.previous_contract_code,
     history.contract_code_last_change_date,
     history.previous_at_risk_status,

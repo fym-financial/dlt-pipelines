@@ -642,6 +642,10 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         assert latest_load_sql.rindex("policy_roster_hierarchy.roster_hierarchy_json") < (
             latest_load_sql.rindex("history.previous_contract_code")
         )
+        assert "'unl'::text AS carrier" in latest_load_sql
+        assert latest_load_sql.rindex("'unl'::text AS carrier") < (
+            latest_load_sql.rindex("history.previous_contract_code")
+        )
     weekly_advance_latest_load_sql_by_schema = {
         query.split(".")[0].removeprefix("CREATE OR REPLACE VIEW "): query
         for query in executed_sql
