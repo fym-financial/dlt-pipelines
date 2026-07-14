@@ -1,12 +1,18 @@
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
+import json
 
 from dlt_pipelines.db import (
     FileAuditEvent,
+    _heartland_inforced_policy_typed_select,
+    _heartland_typed_refresh_statements,
     check_unl_fym_policy_loaded,
     check_postgres_connection,
     record_file_events,
     refresh_typed_dataset,
 )
+from dlt_pipelines.sources import api
+from dlt_pipelines.sources.api import HEARTLAND_POLICY_FIELDS, heartland_inforced_policies
 from dlt_pipelines.sources.files import csv_customers
 from dlt_pipelines.sources import s3
 from dlt_pipelines.sources.s3 import FileRoute, _routes_for_provider, _routes_with_matches
@@ -27,6 +33,83 @@ def test_csv_customers_reads_sample_data() -> None:
 
     assert rows
     assert rows[0]["customer_id"] == "1"
+
+
+def test_heartland_source_logs_in_and_fetches_policy_snapshot(monkeypatch) -> None:
+    calls = []
+    source_row = {field: "" for field in HEARTLAND_POLICY_FIELDS}
+    source_row.update({"polNo": "HN1", "premium": "123.45", "issAge": "67"})
+    responses = [
+        BytesIO(b"test-token"),
+        BytesIO(json.dumps([source_row]).encode()),
+    ]
+
+    def fake_urlopen(request, timeout):
+        calls.append((request, timeout))
+        return responses.pop(0)
+
+    monkeypatch.setattr(api, "urlopen", fake_urlopen)
+
+    rows = list(
+        heartland_inforced_policies(
+            username="FYMUser",
+            password="secret",
+            base_url="https://heartland.test/",
+        )
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["polNo"] == "HN1"
+    assert rows[0]["premium"] == "123.45"
+    assert set(rows[0]) == set(HEARTLAND_POLICY_FIELDS)
+
+    login_request, login_timeout = calls[0]
+    assert login_request.full_url == "https://heartland.test/api/auth/login"
+    assert login_request.method == "POST"
+    assert login_timeout == 30
+    assert json.loads(login_request.data) == {
+        "Username": "FYMUser",
+        "Password": "secret",
+    }
+
+    policy_request, policy_timeout = calls[1]
+    assert policy_request.full_url == "https://heartland.test/api/FYM/GetPolicies"
+    assert policy_request.method == "GET"
+    assert policy_request.get_header("Authorization") == "Bearer test-token"
+    assert policy_timeout == 60
+
+
+def test_heartland_typed_select_applies_conservative_types() -> None:
+    select_sql = _heartland_inforced_policy_typed_select()
+
+    assert "premium_text::numeric" in select_sql
+    assert "share_text::numeric" in select_sql
+    assert "iss_age_text::smallint" in select_sql
+    assert "AS app_date" in select_sql
+    assert "AS eff_date" in select_sql
+    assert "AS birth_date" in select_sql
+    assert "AS entry_date" in select_sql
+    assert "AS initial_paid_date" in select_sql
+    assert "AS paid_to_date" in select_sql
+    assert "AS charge_back_dt" in select_sql
+    assert "AS end_date" in select_sql
+    assert "p.client_zip::text), '') AS client_state" in select_sql
+    assert "p.client_state::text), '') AS client_zip" in select_sql
+    assert "p.plan::text" in select_sql
+    assert "p.draft_day::text" in select_sql
+
+    refresh_sql = "\n".join(_heartland_typed_refresh_statements())
+    assert "raw.heartland_inforced_policy_snapshot" in refresh_sql
+    assert "CREATE TABLE IF NOT EXISTS raw.heartland_inforced_policy" in refresh_sql
+    assert "CREATE TABLE IF NOT EXISTS typed.heartland_inforced_policy" in refresh_sql
+    assert "ON CONFLICT (_row_hash) DO NOTHING" in refresh_sql
+    assert "ON CONFLICT (raw_row_hash) DO NOTHING" in refresh_sql
+    assert "CREATE OR REPLACE VIEW typed.heartland_inforced_policy_latest" in refresh_sql
+    assert "TRUNCATE TABLE raw.heartland_inforced_policy" not in refresh_sql
+    assert "TRUNCATE TABLE typed.heartland_inforced_policy" not in refresh_sql
+    assert " DO UPDATE" not in refresh_sql
+    assert "DELETE FROM raw.heartland_inforced_policy" not in refresh_sql
+    assert "DELETE FROM typed.heartland_inforced_policy" not in refresh_sql
 
 
 def test_unl_typed_pipeline_uses_sql_cursor_and_insert_only_merge(monkeypatch) -> None:

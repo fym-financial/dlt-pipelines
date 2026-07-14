@@ -50,6 +50,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="DLT pipeline state name.",
     )
 
+    load_heartland_parser = subparsers.add_parser(
+        "load-heartland",
+        help="Load Heartland inforced policies into raw and typed PostgreSQL tables.",
+    )
+    load_heartland_parser.add_argument(
+        "--dataset",
+        default="raw",
+        help="Raw destination dataset/schema name in PostgreSQL.",
+    )
+    load_heartland_parser.add_argument(
+        "--pipeline-name",
+        default="heartland_api",
+        help="DLT pipeline state name.",
+    )
+    load_heartland_parser.add_argument(
+        "--no-refresh-typed",
+        action="store_true",
+        help="Skip promoting the snapshot into canonical raw and typed history.",
+    )
+
     land_parser = subparsers.add_parser("land-sftp", help="Copy matching SFTP files into S3.")
     land_parser.add_argument("provider", help="Provider key, such as unl.")
     land_parser.add_argument(
@@ -219,6 +239,17 @@ def main() -> None:
             archived = archive_landed_files(args.provider, progress=_print_progress)
             _record_archived_files(args.provider, archived)
             print(f"Archived {len(archived)} landed file(s).")
+        return
+
+    if args.command == "load-heartland":
+        load_info = run_pipeline(
+            source_name="heartland",
+            dataset_name=args.dataset,
+            pipeline_name=args.pipeline_name,
+        )
+        print(load_info)
+        if not args.no_refresh_typed:
+            _refresh_typed_and_print("heartland")
         return
 
     if args.command == "archive-s3":

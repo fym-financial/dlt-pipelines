@@ -21,6 +21,38 @@ def test_refresh_typed_command_prints_result(monkeypatch, capsys) -> None:
     assert "Refreshed typed.unl_fym_policy for provider unl with 99 row(s)." in captured.out
 
 
+def test_load_heartland_loads_raw_and_refreshes_typed(monkeypatch, capsys) -> None:
+    calls = {}
+
+    class Result:
+        provider = "heartland"
+        schema_name = "typed"
+        table_name = "heartland_inforced_policy"
+        row_count = 222
+
+    def fake_load(**kwargs):
+        calls["load"] = kwargs
+        return "raw loaded"
+
+    monkeypatch.setattr(cli, "run_pipeline", fake_load)
+    monkeypatch.setattr(cli, "refresh_typed_dataset", lambda provider: Result())
+    monkeypatch.setattr(sys, "argv", ["dlt-pipeline", "load-heartland"])
+
+    cli.main()
+
+    assert calls["load"] == {
+        "source_name": "heartland",
+        "dataset_name": "raw",
+        "pipeline_name": "heartland_api",
+    }
+    captured = capsys.readouterr()
+    assert "raw loaded" in captured.out
+    assert (
+        "Refreshed typed.heartland_inforced_policy for provider heartland "
+        "with 222 row(s)."
+    ) in captured.out
+
+
 def test_load_s3_refreshes_typed_by_default(monkeypatch, capsys) -> None:
     calls = {"refreshed": False}
 

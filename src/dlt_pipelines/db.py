@@ -331,6 +331,8 @@ def check_unl_fym_policy_loaded(
 
 
 def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
+    if provider == "heartland":
+        return _refresh_heartland_typed_dataset()
     if provider != "unl":
         raise RuntimeError(f"Typed refresh is not configured for provider '{provider}'.")
 
@@ -378,6 +380,30 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
         provider=provider,
         schema_name="typed",
         table_name="unl_fym_policy",
+        row_count=row_count,
+    )
+
+
+def _refresh_heartland_typed_dataset() -> TypedRefreshResult:
+    """Append unseen Heartland row versions to canonical raw and typed history."""
+    connection = _connect()
+    try:
+        with connection.cursor() as cursor:
+            for statement in _heartland_typed_refresh_statements():
+                cursor.execute(statement)
+            cursor.execute("SELECT count(*) FROM typed.heartland_inforced_policy")
+            row_count = int(cursor.fetchone()[0])
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    return TypedRefreshResult(
+        provider="heartland",
+        schema_name="typed",
+        table_name="heartland_inforced_policy",
         row_count=row_count,
     )
 
@@ -1547,6 +1573,275 @@ SELECT
     END AS outcome
 FROM ep_outcomes
 CROSS JOIN file_bounds
+"""
+
+
+def _heartland_typed_refresh_statements() -> tuple[str, ...]:
+    typed_select = _heartland_inforced_policy_typed_select()
+    return (
+        "CREATE SCHEMA IF NOT EXISTS raw",
+        "CREATE SCHEMA IF NOT EXISTS typed",
+        (
+            "CREATE TABLE IF NOT EXISTS raw.heartland_inforced_policy AS "
+            f"{_heartland_raw_history_select()} WITH NO DATA"
+        ),
+        (
+            "CREATE UNIQUE INDEX IF NOT EXISTS heartland_inforced_policy_row_hash_idx "
+            "ON raw.heartland_inforced_policy (_row_hash)"
+        ),
+        (
+            "INSERT INTO raw.heartland_inforced_policy "
+            f"{_heartland_raw_history_select(only_unseen=True)} "
+            "ON CONFLICT (_row_hash) DO NOTHING"
+        ),
+        (
+            "CREATE TABLE IF NOT EXISTS typed.heartland_inforced_policy AS "
+            f"{typed_select} WITH NO DATA"
+        ),
+        (
+            "CREATE UNIQUE INDEX IF NOT EXISTS heartland_inforced_policy_typed_row_hash_idx "
+            "ON typed.heartland_inforced_policy (raw_row_hash)"
+        ),
+        (
+            "INSERT INTO typed.heartland_inforced_policy "
+            f"SELECT new_rows.* FROM ({typed_select}) AS new_rows "
+            "WHERE NOT EXISTS ("
+            "SELECT 1 FROM typed.heartland_inforced_policy AS existing "
+            "WHERE existing.raw_row_hash = new_rows.raw_row_hash"
+            ") ON CONFLICT (raw_row_hash) DO NOTHING"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_pol_no_idx "
+            "ON typed.heartland_inforced_policy (pol_no)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_app_guid_idx "
+            "ON typed.heartland_inforced_policy (app_guid)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_agt_code_idx "
+            "ON typed.heartland_inforced_policy (agt_code)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_status_idx "
+            "ON typed.heartland_inforced_policy (hnl_status)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_eff_date_idx "
+            "ON typed.heartland_inforced_policy (eff_date)"
+        ),
+        "CREATE OR REPLACE VIEW typed.heartland_inforced_policy_latest AS "
+        "SELECT DISTINCT ON (pol_no, agt_code, writing_split) * "
+        "FROM typed.heartland_inforced_policy "
+        "ORDER BY pol_no, agt_code, writing_split, first_seen_at DESC, raw_row_hash DESC",
+        "ANALYZE raw.heartland_inforced_policy",
+        "ANALYZE typed.heartland_inforced_policy",
+    )
+
+
+def _heartland_raw_history_select(*, only_unseen: bool = False) -> str:
+    row_hash = _heartland_row_hash_sql("p")
+    unseen_filter = ""
+    if only_unseen:
+        unseen_filter = """
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM raw.heartland_inforced_policy AS existing
+    WHERE existing._row_hash = snapshot_rows._row_hash
+)
+"""
+    return f"""
+SELECT DISTINCT ON (snapshot_rows._row_hash)
+    snapshot_rows.*
+FROM (
+    SELECT
+        p.pol_no,
+        p.agt_code,
+        p.agt_first_name,
+        p.agt_last_name,
+        p.amr_status,
+        p.app_date,
+        p.eff_date,
+        p.birth_date,
+        p.premium,
+        p.plan,
+        p.product_desc,
+        p.type,
+        p.issue_state,
+        p.entry_date,
+        p.first_name,
+        p.last_name,
+        p.share,
+        p.initial_paid_date,
+        p.client_address,
+        p.client_address2,
+        p.client_city,
+        p.client_state,
+        p.client_zip,
+        p.client_email,
+        p.client_phone,
+        p.paid_to_date,
+        p.draft_day,
+        p.hnl_status,
+        p.return_descripton,
+        p.charge_back_dt,
+        p.upline,
+        p.iss_age,
+        p.end_date,
+        p.app_guid,
+        p.app_type,
+        p.writing_split,
+        p._dlt_load_id AS source_dlt_load_id,
+        p._dlt_id AS source_dlt_id,
+        {row_hash} AS _row_hash,
+        now() AS _first_seen_at
+    FROM raw.heartland_inforced_policy_snapshot AS p
+) AS snapshot_rows
+{unseen_filter}
+ORDER BY snapshot_rows._row_hash, snapshot_rows.source_dlt_id
+"""
+
+
+def _heartland_row_hash_sql(table_alias: str) -> str:
+    fields = (
+        "pol_no",
+        "agt_code",
+        "agt_first_name",
+        "agt_last_name",
+        "amr_status",
+        "app_date",
+        "eff_date",
+        "birth_date",
+        "premium",
+        "plan",
+        "product_desc",
+        "type",
+        "issue_state",
+        "entry_date",
+        "first_name",
+        "last_name",
+        "share",
+        "initial_paid_date",
+        "client_address",
+        "client_address2",
+        "client_city",
+        "client_state",
+        "client_zip",
+        "client_email",
+        "client_phone",
+        "paid_to_date",
+        "draft_day",
+        "hnl_status",
+        "return_descripton",
+        "charge_back_dt",
+        "upline",
+        "iss_age",
+        "end_date",
+        "app_guid",
+        "app_type",
+        "writing_split",
+    )
+    values = ", ".join(f"{table_alias}.{field}" for field in fields)
+    return f"md5(jsonb_build_array({values})::text)"
+
+
+def _heartland_inforced_policy_typed_select() -> str:
+    return f"""
+WITH base AS (
+    SELECT
+        nullif(trim(p.pol_no::text), '') AS pol_no,
+        nullif(trim(p.agt_code::text), '') AS agt_code,
+        nullif(trim(p.agt_first_name::text), '') AS agt_first_name,
+        nullif(trim(p.agt_last_name::text), '') AS agt_last_name,
+        nullif(trim(p.amr_status::text), '') AS amr_status,
+        nullif(trim(p.app_date::text), '') AS app_date_text,
+        nullif(trim(p.eff_date::text), '') AS eff_date_text,
+        nullif(trim(p.birth_date::text), '') AS birth_date_text,
+        nullif(trim(p.premium::text), '') AS premium_text,
+        nullif(trim(p.plan::text), '') AS plan,
+        nullif(trim(p.product_desc::text), '') AS product_desc,
+        nullif(trim(p.type::text), '') AS type,
+        nullif(trim(p.issue_state::text), '') AS issue_state,
+        nullif(trim(p.entry_date::text), '') AS entry_date_text,
+        nullif(trim(p.first_name::text), '') AS first_name,
+        nullif(trim(p.last_name::text), '') AS last_name,
+        nullif(trim(p.share::text), '') AS share_text,
+        nullif(trim(p.initial_paid_date::text), '') AS initial_paid_date_text,
+        nullif(trim(p.client_address::text), '') AS client_address,
+        nullif(trim(p.client_address2::text), '') AS client_address2,
+        nullif(trim(p.client_city::text), '') AS client_city,
+        nullif(trim(p.client_zip::text), '') AS client_state,
+        nullif(trim(p.client_state::text), '') AS client_zip,
+        nullif(trim(p.client_email::text), '') AS client_email,
+        nullif(trim(p.client_phone::text), '') AS client_phone,
+        nullif(trim(p.paid_to_date::text), '') AS paid_to_date_text,
+        nullif(trim(p.draft_day::text), '') AS draft_day,
+        nullif(trim(p.hnl_status::text), '') AS hnl_status,
+        nullif(trim(p.return_descripton::text), '') AS return_descripton,
+        nullif(trim(p.charge_back_dt::text), '') AS charge_back_dt_text,
+        nullif(trim(p.upline::text), '') AS upline,
+        nullif(trim(p.iss_age::text), '') AS iss_age_text,
+        nullif(trim(p.end_date::text), '') AS end_date_text,
+        nullif(trim(p.app_guid::text), '') AS app_guid,
+        nullif(trim(p.app_type::text), '') AS app_type,
+        nullif(trim(p.writing_split::text), '') AS writing_split,
+        p.source_dlt_load_id,
+        p.source_dlt_id,
+        p._row_hash AS raw_row_hash,
+        p._first_seen_at AS first_seen_at
+    FROM raw.heartland_inforced_policy AS p
+)
+SELECT
+    pol_no,
+    agt_code,
+    agt_first_name,
+    agt_last_name,
+    amr_status,
+    CASE {_date_parse_sql("app_date_text")} END AS app_date,
+    CASE {_date_parse_sql("eff_date_text")} END AS eff_date,
+    CASE {_date_parse_sql("birth_date_text")} END AS birth_date,
+    CASE
+        WHEN premium_text ~ '^-?\\d+(\\.\\d+)?$'
+        THEN premium_text::numeric
+    END AS premium,
+    plan,
+    product_desc,
+    type,
+    issue_state,
+    CASE {_date_parse_sql("entry_date_text")} END AS entry_date,
+    first_name,
+    last_name,
+    CASE
+        WHEN share_text ~ '^-?\\d+(\\.\\d+)?$'
+        THEN share_text::numeric
+    END AS share,
+    CASE {_date_parse_sql("initial_paid_date_text")} END AS initial_paid_date,
+    client_address,
+    client_address2,
+    client_city,
+    client_state,
+    client_zip,
+    client_email,
+    client_phone,
+    CASE {_date_parse_sql("paid_to_date_text")} END AS paid_to_date,
+    draft_day,
+    hnl_status,
+    return_descripton,
+    CASE {_date_parse_sql("charge_back_dt_text")} END AS charge_back_dt,
+    upline,
+    CASE
+        WHEN iss_age_text ~ '^\\d+$'
+        THEN iss_age_text::smallint
+    END AS iss_age,
+    CASE {_date_parse_sql("end_date_text")} END AS end_date,
+    app_guid,
+    app_type,
+    writing_split,
+    source_dlt_load_id,
+    source_dlt_id,
+    raw_row_hash,
+    first_seen_at
+FROM base
 """
 
 

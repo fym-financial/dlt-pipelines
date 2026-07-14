@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import dlt
 
-from dlt_pipelines.sources.api import jsonplaceholder_posts
+from dlt_pipelines.sources.api import heartland_inforced_policies, jsonplaceholder_posts
 from dlt_pipelines.sources.files import csv_customers
 from dlt_pipelines.sources.s3 import landed_csv_files
 
@@ -15,6 +15,7 @@ SourceFactory = Callable[[str | None], object]
 SOURCE_FACTORIES: dict[str, SourceFactory] = {
     "api": lambda provider=None: jsonplaceholder_posts(),
     "csv": lambda provider=None: csv_customers(),
+    "heartland": lambda provider=None: heartland_inforced_policies(),
     "s3": landed_csv_files,
 }
 SOURCE_CHOICES = tuple(sorted(SOURCE_FACTORIES))

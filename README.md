@@ -117,6 +117,42 @@ Refresh the typed PostgreSQL table from `raw` without running a new file load:
 infisical run --env=dev -- uv run dlt-pipeline refresh-typed unl
 ```
 
+## Heartland API Flow
+
+Load the current Heartland inforced-policy response into both
+`raw.heartland_inforced_policy` and `typed.heartland_inforced_policy`:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline load-heartland
+```
+
+The API's full response is first loaded into the disposable
+`raw.heartland_inforced_policy_snapshot` staging table. A deterministic hash of
+all 36 business fields is then used to append only previously unseen row
+versions to `raw.heartland_inforced_policy`. Existing canonical rows are never
+updated or deleted, and an unchanged API response adds zero canonical rows.
+
+The typed table is also insert-only. It converts business dates to PostgreSQL
+`date`, converts `premium` and `share` to `numeric`, converts `iss_age` to
+`smallint`, and retains identifiers and other numeric-looking codes as text. It
+also corrects the API's reversed `clientState` and `clientZip` values. Use
+`typed.heartland_inforced_policy_latest` for the newest observed version of
+each policy/agent/writing-split combination.
+
+To load only the disposable API snapshot without promoting it into canonical
+raw and typed history:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline load-heartland --no-refresh-typed
+```
+
+To promote unseen rows from an existing API snapshot and append their typed
+versions:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline refresh-typed heartland
+```
+
 This runs a separate DLT SQL-source pipeline from `raw.unl_fym_policy` to
 `typed.unl_fym_policy`. Its first run backfills the full raw table; later runs
 use `raw_dlt_load_id` as a persisted incremental cursor and merge only new rows.
@@ -158,6 +194,14 @@ secrets in Infisical and inject them as environment variables at runtime:
 | `DESTINATION__POSTGRES__CREDENTIALS__HOST` | Yes | `localhost` | Use the service host in deployed environments. |
 | `DESTINATION__POSTGRES__CREDENTIALS__PORT` | Yes | `5432` | PostgreSQL port. |
 | `DESTINATION__POSTGRES__CREDENTIALS__CONNECT_TIMEOUT` | No | `15` | Connection timeout in seconds. |
+
+The Heartland API load uses these secrets:
+
+| Infisical secret name | Required | Default/example | Notes |
+| --- | --- | --- | --- |
+| `HEARTLAND_API_USERNAME` | No | `FYMUser` | API login username. |
+| `HEARTLAND_API_PASSWORD` | Yes | `...` | API login password. |
+| `HEARTLAND_API_BASE_URL` | No | `https://api.hnlicagent.com` | Override only for testing or a vendor URL change. |
 
 The UNL typed refresh also snapshots roster tables from the application database
 into `raw_roster` before rebuilding typed views. By default it reads
