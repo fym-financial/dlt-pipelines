@@ -649,6 +649,15 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history")
         for query in executed_sql
     )
+    history_column_migration_sql = next(
+        query
+        for query in executed_sql
+        if "ALTER TABLE typed.unl_fym_policy_change_history" in query
+        and "RENAME COLUMN at_risk_policy_last_change_date" in query
+    )
+    assert "TO at_risk_status_last_change_date" in history_column_migration_sql
+    assert "ALTER VIEW raw.unl_fym_policy_latest_load" in history_column_migration_sql
+    assert "ALTER VIEW typed.unl_fym_policy_latest_load" in history_column_migration_sql
     assert "TRUNCATE TABLE typed.unl_fym_policy_change_history" not in executed_sql
     history_reset_sql = next(
         query
@@ -676,6 +685,7 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     assert "cntrct_code IS DISTINCT FROM previous_contract_observation" in history_insert_sql
     assert "array_agg(at_risk_event_previous_value) FILTER" in history_insert_sql
     assert "at_risk_policy IS DISTINCT FROM previous_at_risk_observation" in history_insert_sql
+    assert "at_risk_status_last_change_date" in history_insert_sql
     assert any(
         query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements")
         for query in executed_sql
@@ -736,7 +746,7 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         assert "history.previous_contract_code" in latest_load_sql
         assert "history.contract_code_last_change_date" in latest_load_sql
         assert "history.previous_at_risk_status" in latest_load_sql
-        assert "history.at_risk_policy_last_change_date" in latest_load_sql
+        assert "history.at_risk_status_last_change_date" in latest_load_sql
         assert latest_load_sql.rindex("policy_roster_hierarchy.roster_hierarchy_json") < (
             latest_load_sql.rindex("history.previous_contract_code")
         )

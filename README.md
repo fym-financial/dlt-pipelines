@@ -126,7 +126,7 @@ and the latest-load views are migrated before the data refresh.
 The FYM policy typed history and both FYM policy latest-load views include:
 
 - `previous_contract_code` and `contract_code_last_change_date`
-- `previous_at_risk_status` and `at_risk_policy_last_change_date`
+- `previous_at_risk_status` and `at_risk_status_last_change_date`
 
 The previous value is the value immediately before the most recent observed
 change for that policy. Both fields in a pair are null until a change is

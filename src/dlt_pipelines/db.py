@@ -707,6 +707,7 @@ def _typed_schema_and_view_statements() -> tuple[str, ...]:
             "CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history AS "
             f"{fym_policy_change_history_select} WITH NO DATA"
         ),
+        _at_risk_history_column_migration_statement(),
         (
             "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_change_history_dlt_id_idx "
             "ON typed.unl_fym_policy_change_history (_dlt_id)"
@@ -720,6 +721,56 @@ def _typed_schema_and_view_statements() -> tuple[str, ...]:
         _unl_weekly_advance_latest_load_view_statement("raw"),
         _unl_weekly_advance_latest_load_view_statement("typed"),
     )
+
+
+def _at_risk_history_column_migration_statement() -> str:
+    return """
+    DO $migration$
+    BEGIN
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'typed'
+              AND table_name = 'unl_fym_policy_change_history'
+              AND column_name = 'at_risk_policy_last_change_date'
+        ) AND NOT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'typed'
+              AND table_name = 'unl_fym_policy_change_history'
+              AND column_name = 'at_risk_status_last_change_date'
+        ) THEN
+            ALTER TABLE typed.unl_fym_policy_change_history
+                RENAME COLUMN at_risk_policy_last_change_date
+                TO at_risk_status_last_change_date;
+        END IF;
+
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'raw'
+              AND table_name = 'unl_fym_policy_latest_load'
+              AND column_name = 'at_risk_policy_last_change_date'
+        ) THEN
+            ALTER VIEW raw.unl_fym_policy_latest_load
+                RENAME COLUMN at_risk_policy_last_change_date
+                TO at_risk_status_last_change_date;
+        END IF;
+
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'typed'
+              AND table_name = 'unl_fym_policy_latest_load'
+              AND column_name = 'at_risk_policy_last_change_date'
+        ) THEN
+            ALTER VIEW typed.unl_fym_policy_latest_load
+                RENAME COLUMN at_risk_policy_last_change_date
+                TO at_risk_status_last_change_date;
+        END IF;
+    END
+    $migration$
+    """
 
 
 def _typed_policy_initial_load_id(cursor) -> str | None:
@@ -945,7 +996,7 @@ SELECT
     history.previous_contract_code,
     history.contract_code_last_change_date,
     history.previous_at_risk_status,
-    history.at_risk_policy_last_change_date
+    history.at_risk_status_last_change_date
 FROM latest_policy AS p
 LEFT JOIN policy_roster_hierarchy
   ON policy_roster_hierarchy._dlt_id = p._dlt_id
@@ -1133,7 +1184,7 @@ history_rows AS (
         max(file_date) FILTER (
             WHERE observation_number > 1
               AND at_risk_policy IS DISTINCT FROM previous_at_risk_observation
-        ) OVER history_window AS at_risk_policy_last_change_date
+        ) OVER history_window AS at_risk_status_last_change_date
     FROM sequenced_rows
     WINDOW history_window AS (
         PARTITION BY policy_nbr
@@ -1147,7 +1198,7 @@ SELECT
     contract_code_last_change_date,
     previous_at_risk_statuses[cardinality(previous_at_risk_statuses)]
         AS previous_at_risk_status,
-    at_risk_policy_last_change_date
+    at_risk_status_last_change_date
 FROM history_rows
 """
 
@@ -1158,7 +1209,7 @@ def _unl_fym_policy_incremental_history_insert_statement() -> str:
     previous_contract_code,
     contract_code_last_change_date,
     previous_at_risk_status,
-    at_risk_policy_last_change_date
+    at_risk_status_last_change_date
 )
 WITH pending_rows AS (
     SELECT
@@ -1188,7 +1239,7 @@ prior_rows AS (
         h.previous_contract_code,
         h.contract_code_last_change_date,
         h.previous_at_risk_status,
-        h.at_risk_policy_last_change_date
+        h.at_risk_status_last_change_date
     FROM typed.unl_fym_policy AS p
     JOIN affected_policies AS affected
       ON affected.policy_nbr = p.policy_nbr
@@ -1212,7 +1263,7 @@ observations AS (
         previous_contract_code AS seed_previous_contract_code,
         contract_code_last_change_date AS seed_contract_change_date,
         previous_at_risk_status AS seed_previous_at_risk_status,
-        at_risk_policy_last_change_date AS seed_at_risk_change_date
+        at_risk_status_last_change_date AS seed_at_risk_change_date
     FROM prior_rows
 
     UNION ALL
@@ -1292,7 +1343,7 @@ history_rows AS (
         ) OVER history_window AS previous_at_risk_statuses,
         max(at_risk_event_date) FILTER (
             WHERE at_risk_event
-        ) OVER history_window AS at_risk_policy_last_change_date
+        ) OVER history_window AS at_risk_status_last_change_date
     FROM marked_rows
     WINDOW history_window AS (
         PARTITION BY policy_nbr
@@ -1305,7 +1356,7 @@ SELECT
     previous_contract_codes[cardinality(previous_contract_codes)],
     contract_code_last_change_date,
     previous_at_risk_statuses[cardinality(previous_at_risk_statuses)],
-    at_risk_policy_last_change_date
+    at_risk_status_last_change_date
 FROM history_rows
 WHERE is_new
 ON CONFLICT (_dlt_id) DO NOTHING
