@@ -7,7 +7,6 @@ from dlt_pipelines.db import (
     FileAuditEvent,
     _heartland_inforced_policy_typed_select,
     _heartland_typed_refresh_statements,
-    _postgres_setting,
     check_unl_fym_policy_loaded,
     check_postgres_connection,
     record_file_events,
@@ -482,10 +481,11 @@ def test_check_postgres_connection_uses_destination_credentials(monkeypatch) -> 
         return FakeConnection()
 
     monkeypatch.setattr("dlt_pipelines.db.psycopg2.connect", fake_connect)
-    monkeypatch.setenv(
-        "DESTINATION__POSTGRES__CREDENTIALS",
-        "postgresql://analytics_loader:secret@db.example.com:5432/analytics",
-    )
+    monkeypatch.setenv("DESTINATION__POSTGRES__CREDENTIALS__DATABASE", "analytics")
+    monkeypatch.setenv("DESTINATION__POSTGRES__CREDENTIALS__USERNAME", "analytics_loader")
+    monkeypatch.setenv("DESTINATION__POSTGRES__CREDENTIALS__PASSWORD", "secret")
+    monkeypatch.setenv("DESTINATION__POSTGRES__CREDENTIALS__HOST", "db.example.com")
+    monkeypatch.setenv("DESTINATION__POSTGRES__CREDENTIALS__PORT", "5432")
 
     result = check_postgres_connection()
 
@@ -504,20 +504,6 @@ def test_check_postgres_connection_uses_destination_credentials(monkeypatch) -> 
     assert all(schema.exists for schema in result.schemas)
     assert all(schema.has_usage for schema in result.schemas)
     assert all(schema.has_create for schema in result.schemas)
-
-
-def test_postgres_settings_parse_dlt_connection_string(monkeypatch) -> None:
-    monkeypatch.setenv(
-        "DESTINATION__POSTGRES__CREDENTIALS",
-        "postgresql://loader:p%40ss@postgres.example.com:5544/postgres?connect_timeout=22",
-    )
-
-    assert _postgres_setting("database") == "postgres"
-    assert _postgres_setting("username") == "loader"
-    assert _postgres_setting("password") == "p@ss"
-    assert _postgres_setting("host") == "postgres.example.com"
-    assert _postgres_setting("port") == "5544"
-    assert _postgres_setting("connect_timeout", default="15") == "22"
 
 
 def test_record_file_events_upserts_audit_rows(monkeypatch) -> None:
