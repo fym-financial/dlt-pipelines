@@ -117,9 +117,11 @@ Refresh the typed PostgreSQL table from `raw` without running a new file load:
 infisical run --env=dev -- uv run dlt-pipeline refresh-typed unl
 ```
 
-This also refreshes roster snapshots, rebuilds `typed.unl_fym_policy` and
-`typed.unl_weekly_advance_statements`, and recreates latest-load views for both
-raw and typed FYM policy and weekly advance data.
+This runs a separate DLT SQL-source pipeline from `raw.unl_fym_policy` to
+`typed.unl_fym_policy`. Its first run backfills the full raw table; later runs
+use `raw_dlt_load_id` as a persisted incremental cursor and merge only new rows.
+Roster snapshots and `typed.unl_weekly_advance_statements` are still rebuilt,
+and the latest-load views are migrated before the data refresh.
 
 The FYM policy typed history and both FYM policy latest-load views include:
 
@@ -128,8 +130,10 @@ The FYM policy typed history and both FYM policy latest-load views include:
 
 The previous value is the value immediately before the most recent observed
 change for that policy. Both fields in a pair are null until a change is
-observed. Change history is calculated once during the typed refresh so reads
-from the latest-load views do not rescan all raw loads.
+observed. Change history is appended only for typed rows that do not already
+have a history record, so normal refreshes do not rewrite historical rows.
+If a newly ingested raw load has an older file date, history is rebuilt only
+for the policies affected by that out-of-order backfill.
 
 After a successful `load-s3`, matching landed files are moved into an `Archive`
 subdirectory beside their current B2/S3 location.

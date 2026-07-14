@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import PurePosixPath
+from urllib.parse import quote_plus
 
 import psycopg2
 from psycopg2 import sql
@@ -134,6 +135,47 @@ ROSTER_TABLE_SNAPSHOTS = (
             ("created", "timestamp"),
         ),
     ),
+)
+
+UNL_TYPED_POLICY_VIEW_COLUMNS = (
+    "mga",
+    "mga_name",
+    "ga",
+    "ga_name",
+    "wa",
+    "wa_name",
+    "agent_ga_level_01",
+    "agent_level_02",
+    "agent_level_03",
+    "agent_level_04",
+    "agent_level_05",
+    "agent_level_06",
+    "agent_level_07",
+    "agent_level_08",
+    "agent_level_09",
+    "agent_level_10",
+    "plan_code",
+    "issue_date",
+    "cntrct_code",
+    "app_recvd_date",
+    "annual_premium",
+    "issue_state",
+    "policy_nbr",
+    "paid_to_date",
+    "billing_mode",
+    "first_name",
+    "last_name",
+    "zip",
+    "phone_nbr",
+    "_source_file",
+    "_dlt_load_id",
+    "_dlt_id",
+    "cntrct_reason",
+    "cntrct_date",
+    "billing_form",
+    "term_date",
+    "file_date",
+    "at_risk_policy",
 )
 
 
@@ -295,6 +337,26 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
     connection = _connect()
     try:
         with connection.cursor() as cursor:
+            for statement in _unl_typed_preparation_statements():
+                cursor.execute(statement)
+            initial_load_id = _typed_policy_initial_load_id(cursor)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    from dlt_pipelines.pipelines.typed import run_unl_fym_policy_typed_pipeline
+
+    run_unl_fym_policy_typed_pipeline(
+        source_credentials=_postgres_sqlalchemy_credentials(),
+        initial_load_id=initial_load_id,
+    )
+
+    connection = _connect()
+    try:
+        with connection.cursor() as cursor:
             for statement in _typed_schema_and_view_statements():
                 cursor.execute(statement)
         connection.commit()
@@ -329,6 +391,15 @@ def _connect():
         port=_postgres_setting("port"),
         connect_timeout=int(_postgres_setting("connect_timeout", default="15")),
     )
+
+
+def _postgres_sqlalchemy_credentials() -> str:
+    username = quote_plus(_postgres_setting("username"))
+    password = quote_plus(_postgres_setting("password"))
+    host = _postgres_setting("host")
+    port = _postgres_setting("port")
+    database = _postgres_setting("database")
+    return f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}"
 
 
 def _connect_roster_source():
@@ -491,27 +562,16 @@ def _roster_snapshot_index_statements() -> tuple[str, ...]:
 
 
 def _typed_refresh_statements() -> tuple[str, ...]:
-    fym_policy_typed_select = _unl_fym_policy_typed_select()
-    fym_policy_change_history_select = _unl_fym_policy_change_history_select()
     weekly_advance_typed_select = _unl_weekly_advance_statements_typed_select()
     at_risk_episode_select = _unl_fym_policy_at_risk_episode_select()
     return (
-        "TRUNCATE TABLE typed.unl_fym_policy",
-        f"INSERT INTO typed.unl_fym_policy {fym_policy_typed_select}",
-        "TRUNCATE TABLE typed.unl_fym_policy_change_history",
-        (
-            "INSERT INTO typed.unl_fym_policy_change_history "
-            f"{fym_policy_change_history_select}"
-        ),
+        _unl_fym_policy_out_of_order_history_reset_statement(),
+        _unl_fym_policy_incremental_history_insert_statement(),
         "TRUNCATE TABLE typed.unl_weekly_advance_statements",
         f"INSERT INTO typed.unl_weekly_advance_statements {weekly_advance_typed_select}",
         (
             "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_typed_dlt_id_idx "
             "ON typed.unl_fym_policy (_dlt_id)"
-        ),
-        (
-            "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_change_history_dlt_id_idx "
-            "ON typed.unl_fym_policy_change_history (_dlt_id)"
         ),
         (
             "CREATE INDEX IF NOT EXISTS unl_fym_policy_typed_source_file_idx "
@@ -632,9 +692,24 @@ def _typed_schema_and_view_statements() -> tuple[str, ...]:
     return (
         "CREATE SCHEMA IF NOT EXISTS typed",
         f"CREATE TABLE IF NOT EXISTS typed.unl_fym_policy AS {fym_policy_typed_select} WITH NO DATA",
+        "ALTER TABLE typed.unl_fym_policy ADD COLUMN IF NOT EXISTS _dlt_load_id text",
+        "ALTER TABLE typed.unl_fym_policy ADD COLUMN IF NOT EXISTS _dlt_id text",
+        "ALTER TABLE typed.unl_fym_policy ADD COLUMN IF NOT EXISTS raw_dlt_id text",
+        (
+            "ALTER TABLE typed.unl_fym_policy "
+            "ADD COLUMN IF NOT EXISTS raw_dlt_load_id text"
+        ),
+        (
+            "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_typed_raw_dlt_id_idx "
+            "ON typed.unl_fym_policy (raw_dlt_id) WHERE raw_dlt_id IS NOT NULL"
+        ),
         (
             "CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history AS "
             f"{fym_policy_change_history_select} WITH NO DATA"
+        ),
+        (
+            "CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_change_history_dlt_id_idx "
+            "ON typed.unl_fym_policy_change_history (_dlt_id)"
         ),
         (
             "CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements AS "
@@ -647,7 +722,76 @@ def _typed_schema_and_view_statements() -> tuple[str, ...]:
     )
 
 
+def _typed_policy_initial_load_id(cursor) -> str | None:
+    cursor.execute(
+        """
+        SELECT
+            to_regclass('typed.unl_fym_policy') IS NOT NULL,
+            EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'typed'
+                  AND table_name = 'unl_fym_policy'
+                  AND column_name = 'raw_dlt_load_id'
+            )
+        """
+    )
+    table_exists, has_raw_load_id = cursor.fetchone()
+    if not table_exists:
+        return None
+    if has_raw_load_id:
+        cursor.execute(
+            "SELECT max(coalesce(raw_dlt_load_id, _dlt_load_id)) "
+            "FROM typed.unl_fym_policy"
+        )
+    else:
+        cursor.execute("SELECT max(_dlt_load_id) FROM typed.unl_fym_policy")
+    value = cursor.fetchone()[0]
+    return None if value is None else str(value)
+
+
+def _unl_fym_policy_typed_source_view_statement() -> str:
+    return (
+        "CREATE OR REPLACE VIEW raw.unl_fym_policy_typed_source AS "
+        f"{_unl_fym_policy_typed_select()}"
+    )
+
+
+def _unl_typed_preparation_statements() -> tuple[str, ...]:
+    return (
+        (
+            "CREATE INDEX IF NOT EXISTS unl_fym_policy_raw_dlt_load_id_idx "
+            "ON raw.unl_fym_policy (_dlt_load_id)"
+        ),
+        _unl_fym_policy_typed_source_view_statement(),
+        """
+        DO $migration$
+        BEGIN
+            IF to_regclass('typed.unl_fym_policy') IS NOT NULL THEN
+                ALTER TABLE typed.unl_fym_policy
+                    ADD COLUMN IF NOT EXISTS raw_dlt_id text;
+                ALTER TABLE typed.unl_fym_policy
+                    ADD COLUMN IF NOT EXISTS raw_dlt_load_id text;
+                CREATE UNIQUE INDEX IF NOT EXISTS unl_fym_policy_typed_raw_dlt_id_idx
+                    ON typed.unl_fym_policy (raw_dlt_id)
+                    WHERE raw_dlt_id IS NOT NULL;
+            END IF;
+        END
+        $migration$
+        """,
+    )
+
+
 def _unl_fym_policy_latest_load_view_statement(schema_name: str) -> str:
+    history_join_id = "p._dlt_id"
+    if schema_name == "typed":
+        history_join_id = "coalesce(p.raw_dlt_id, p._dlt_id)"
+    policy_projection = "p.*"
+    if schema_name == "typed":
+        policy_projection = ",\n    ".join(
+            f"p.{column_name}" for column_name in UNL_TYPED_POLICY_VIEW_COLUMNS
+        )
+
     return f"""CREATE OR REPLACE VIEW {schema_name}.unl_fym_policy_latest_load AS
 WITH RECURSIVE latest_file AS (
     SELECT fl.file_name
@@ -795,7 +939,7 @@ policy_roster_hierarchy AS (
     GROUP BY _dlt_id
 )
 SELECT
-    p.*,
+    {policy_projection},
     policy_roster_hierarchy.roster_hierarchy_json,
     'unl'::text AS carrier,
     history.previous_contract_code,
@@ -806,7 +950,7 @@ FROM latest_policy AS p
 LEFT JOIN policy_roster_hierarchy
   ON policy_roster_hierarchy._dlt_id = p._dlt_id
 LEFT JOIN typed.unl_fym_policy_change_history AS history
-  ON history._dlt_id = p._dlt_id
+  ON history._dlt_id = {history_join_id}
 """
 
 
@@ -857,8 +1001,8 @@ WITH base AS (
         p.last_name,
         p.phone_nbr,
         p._source_file,
-        p._dlt_load_id,
-        p._dlt_id,
+        p._dlt_load_id AS raw_dlt_load_id,
+        p._dlt_id AS raw_dlt_id,
         p.cntrct_reason,
         p.billing_form,
         coalesce(nullif(p.zip__v_text, ''), lpad(p.zip::text, 5, '0')) AS zip,
@@ -918,8 +1062,8 @@ typed_rows AS (
         zip,
         phone_nbr,
         _source_file,
-        _dlt_load_id,
-        _dlt_id,
+        raw_dlt_load_id,
+        raw_dlt_id,
         cntrct_reason,
         CASE
             WHEN cntrct_date_text ~ '^\\d{8}$'
@@ -959,7 +1103,7 @@ WITH sequenced_rows AS (
         policy_nbr,
         file_date,
         _source_file,
-        _dlt_id,
+        coalesce(raw_dlt_id, _dlt_id) AS _dlt_id,
         cntrct_code,
         at_risk_policy,
         row_number() OVER history_window AS observation_number,
@@ -1005,6 +1149,202 @@ SELECT
         AS previous_at_risk_status,
     at_risk_policy_last_change_date
 FROM history_rows
+"""
+
+
+def _unl_fym_policy_incremental_history_insert_statement() -> str:
+    return """INSERT INTO typed.unl_fym_policy_change_history (
+    _dlt_id,
+    previous_contract_code,
+    contract_code_last_change_date,
+    previous_at_risk_status,
+    at_risk_policy_last_change_date
+)
+WITH pending_rows AS (
+    SELECT
+        p.policy_nbr,
+        p.file_date,
+        p._source_file,
+        coalesce(p.raw_dlt_id, p._dlt_id) AS source_dlt_id,
+        p.cntrct_code,
+        p.at_risk_policy
+    FROM typed.unl_fym_policy AS p
+    LEFT JOIN typed.unl_fym_policy_change_history AS h
+      ON h._dlt_id = coalesce(p.raw_dlt_id, p._dlt_id)
+    WHERE h._dlt_id IS NULL
+),
+affected_policies AS (
+    SELECT DISTINCT policy_nbr
+    FROM pending_rows
+),
+prior_rows AS (
+    SELECT DISTINCT ON (p.policy_nbr)
+        p.policy_nbr,
+        p.file_date,
+        p._source_file,
+        coalesce(p.raw_dlt_id, p._dlt_id) AS source_dlt_id,
+        p.cntrct_code,
+        p.at_risk_policy,
+        h.previous_contract_code,
+        h.contract_code_last_change_date,
+        h.previous_at_risk_status,
+        h.at_risk_policy_last_change_date
+    FROM typed.unl_fym_policy AS p
+    JOIN affected_policies AS affected
+      ON affected.policy_nbr = p.policy_nbr
+    JOIN typed.unl_fym_policy_change_history AS h
+      ON h._dlt_id = coalesce(p.raw_dlt_id, p._dlt_id)
+    ORDER BY
+        p.policy_nbr,
+        p.file_date DESC,
+        p._source_file DESC,
+        coalesce(p.raw_dlt_id, p._dlt_id) DESC
+),
+observations AS (
+    SELECT
+        policy_nbr,
+        file_date,
+        _source_file,
+        source_dlt_id,
+        cntrct_code,
+        at_risk_policy,
+        false AS is_new,
+        previous_contract_code AS seed_previous_contract_code,
+        contract_code_last_change_date AS seed_contract_change_date,
+        previous_at_risk_status AS seed_previous_at_risk_status,
+        at_risk_policy_last_change_date AS seed_at_risk_change_date
+    FROM prior_rows
+
+    UNION ALL
+
+    SELECT
+        policy_nbr,
+        file_date,
+        _source_file,
+        source_dlt_id,
+        cntrct_code,
+        at_risk_policy,
+        true AS is_new,
+        NULL::text,
+        NULL::date,
+        NULL::boolean,
+        NULL::date
+    FROM pending_rows
+),
+sequenced_rows AS (
+    SELECT
+        observations.*,
+        lag(source_dlt_id) OVER history_window AS previous_observation_id,
+        lag(cntrct_code) OVER history_window AS previous_contract_observation,
+        lag(at_risk_policy) OVER history_window AS previous_at_risk_observation
+    FROM observations
+    WINDOW history_window AS (
+        PARTITION BY policy_nbr
+        ORDER BY file_date, _source_file, source_dlt_id
+    )
+),
+marked_rows AS (
+    SELECT
+        sequenced_rows.*,
+        (
+            NOT is_new
+            OR (
+                previous_observation_id IS NOT NULL
+                AND cntrct_code IS DISTINCT FROM previous_contract_observation
+            )
+        ) AS contract_event,
+        CASE
+            WHEN NOT is_new THEN seed_previous_contract_code
+            ELSE previous_contract_observation
+        END AS contract_event_previous_value,
+        CASE
+            WHEN NOT is_new THEN seed_contract_change_date
+            ELSE file_date
+        END AS contract_event_date,
+        (
+            NOT is_new
+            OR (
+                previous_observation_id IS NOT NULL
+                AND at_risk_policy IS DISTINCT FROM previous_at_risk_observation
+            )
+        ) AS at_risk_event,
+        CASE
+            WHEN NOT is_new THEN seed_previous_at_risk_status
+            ELSE previous_at_risk_observation
+        END AS at_risk_event_previous_value,
+        CASE
+            WHEN NOT is_new THEN seed_at_risk_change_date
+            ELSE file_date
+        END AS at_risk_event_date
+    FROM sequenced_rows
+),
+history_rows AS (
+    SELECT
+        marked_rows.*,
+        array_agg(contract_event_previous_value) FILTER (
+            WHERE contract_event
+        ) OVER history_window AS previous_contract_codes,
+        max(contract_event_date) FILTER (
+            WHERE contract_event
+        ) OVER history_window AS contract_code_last_change_date,
+        array_agg(at_risk_event_previous_value) FILTER (
+            WHERE at_risk_event
+        ) OVER history_window AS previous_at_risk_statuses,
+        max(at_risk_event_date) FILTER (
+            WHERE at_risk_event
+        ) OVER history_window AS at_risk_policy_last_change_date
+    FROM marked_rows
+    WINDOW history_window AS (
+        PARTITION BY policy_nbr
+        ORDER BY file_date, _source_file, source_dlt_id
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    )
+)
+SELECT
+    source_dlt_id,
+    previous_contract_codes[cardinality(previous_contract_codes)],
+    contract_code_last_change_date,
+    previous_at_risk_statuses[cardinality(previous_at_risk_statuses)],
+    at_risk_policy_last_change_date
+FROM history_rows
+WHERE is_new
+ON CONFLICT (_dlt_id) DO NOTHING
+"""
+
+
+def _unl_fym_policy_out_of_order_history_reset_statement() -> str:
+    return """WITH pending_rows AS (
+    SELECT
+        p.policy_nbr,
+        min(p.file_date) AS first_pending_file_date
+    FROM typed.unl_fym_policy AS p
+    LEFT JOIN typed.unl_fym_policy_change_history AS h
+      ON h._dlt_id = coalesce(p.raw_dlt_id, p._dlt_id)
+    WHERE h._dlt_id IS NULL
+    GROUP BY p.policy_nbr
+),
+processed_bounds AS (
+    SELECT
+        p.policy_nbr,
+        max(p.file_date) AS last_processed_file_date
+    FROM typed.unl_fym_policy AS p
+    JOIN typed.unl_fym_policy_change_history AS h
+      ON h._dlt_id = coalesce(p.raw_dlt_id, p._dlt_id)
+    JOIN pending_rows AS pending
+      ON pending.policy_nbr = p.policy_nbr
+    GROUP BY p.policy_nbr
+),
+out_of_order_policies AS (
+    SELECT pending.policy_nbr
+    FROM pending_rows AS pending
+    JOIN processed_bounds AS processed
+      ON processed.policy_nbr = pending.policy_nbr
+    WHERE pending.first_pending_file_date <= processed.last_processed_file_date
+)
+DELETE FROM typed.unl_fym_policy_change_history AS history
+USING typed.unl_fym_policy AS policy, out_of_order_policies AS out_of_order
+WHERE history._dlt_id = coalesce(policy.raw_dlt_id, policy._dlt_id)
+  AND policy.policy_nbr = out_of_order.policy_nbr
 """
 
 

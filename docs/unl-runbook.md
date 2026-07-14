@@ -192,8 +192,8 @@ Expected outcome:
 1. DLT loads matching landed files into PostgreSQL.
 2. DLT prints load package information.
 3. `loaded_to_postgres` audit rows are recorded.
-4. `typed.unl_fym_policy` and `typed.unl_weekly_advance_statements` are
-   refreshed from the matching `raw` tables.
+4. DLT incrementally merges new `raw.unl_fym_policy` loads into
+   `typed.unl_fym_policy`; `typed.unl_weekly_advance_statements` is refreshed.
 5. `typed.unl_fym_policy_at_risk_episodes` is rebuilt from
    `typed.unl_fym_policy` for save-rate reporting.
 6. After a successful load, files are moved into `Archive` subdirectories.
@@ -223,7 +223,7 @@ To load without refreshing the typed table:
 infisical run --env=dev -- uv run dlt-pipeline load-s3 unl --no-refresh-typed
 ```
 
-To refresh the typed table from the latest raw data without running a new load:
+To incrementally load any unprocessed raw policy rows without running a new S3 load:
 
 ```bash
 infisical run --env=dev -- uv run dlt-pipeline refresh-typed unl
@@ -277,8 +277,8 @@ Expected outcome:
 1. Matching SFTP files are moved into B2/S3.
 2. SFTP source files are deleted only after B2/S3 target size verification.
 3. Landed files are routed and loaded into PostgreSQL.
-4. `typed.unl_fym_policy` and `typed.unl_weekly_advance_statements` are
-   refreshed from the matching `raw` tables.
+4. DLT incrementally merges new `raw.unl_fym_policy` loads into
+   `typed.unl_fym_policy`; `typed.unl_weekly_advance_statements` is refreshed.
 5. `typed.unl_fym_policy_at_risk_episodes` is rebuilt from
    `typed.unl_fym_policy` for save-rate reporting.
 6. Successfully loaded files are moved into Archive subdirectories.

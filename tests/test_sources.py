@@ -10,6 +10,7 @@ from dlt_pipelines.db import (
 from dlt_pipelines.sources.files import csv_customers
 from dlt_pipelines.sources import s3
 from dlt_pipelines.sources.s3 import FileRoute, _routes_for_provider, _routes_with_matches
+from dlt_pipelines.pipelines.typed import run_unl_fym_policy_typed_pipeline
 from dlt_pipelines.transfers import (
     ArchivePlanItem,
     SftpToS3Config,
@@ -26,6 +27,58 @@ def test_csv_customers_reads_sample_data() -> None:
 
     assert rows
     assert rows[0]["customer_id"] == "1"
+
+
+def test_unl_typed_pipeline_uses_sql_cursor_and_insert_only_merge(monkeypatch) -> None:
+    calls = {}
+
+    class FakeResource:
+        def with_name(self, name: str):
+            calls["resource_name"] = name
+            return self
+
+    class FakePipeline:
+        def run(self, resource):
+            calls["run_resource"] = resource
+            return "loaded"
+
+    def fake_sql_table(**kwargs):
+        calls["sql_table"] = kwargs
+        return FakeResource()
+
+    def fake_pipeline(**kwargs):
+        calls["pipeline"] = kwargs
+        return FakePipeline()
+
+    monkeypatch.setattr("dlt.sources.sql_database.sql_table", fake_sql_table)
+    monkeypatch.setattr("dlt.pipeline", fake_pipeline)
+
+    result = run_unl_fym_policy_typed_pipeline(
+        source_credentials="postgresql+psycopg2://source",
+        initial_load_id="1783955745.5023258",
+    )
+
+    assert result == "loaded"
+    assert calls["resource_name"] == "unl_fym_policy"
+    assert calls["pipeline"] == {
+        "pipeline_name": "unl_typed",
+        "destination": "postgres",
+        "dataset_name": "typed",
+    }
+    sql_table_kwargs = calls["sql_table"]
+    assert sql_table_kwargs["schema"] == "raw"
+    assert sql_table_kwargs["table"] == "unl_fym_policy_typed_source"
+    assert sql_table_kwargs["backend"] == "pyarrow"
+    assert sql_table_kwargs["chunk_size"] == 50_000
+    assert sql_table_kwargs["primary_key"] == "raw_dlt_id"
+    assert sql_table_kwargs["write_disposition"] == {
+        "disposition": "merge",
+        "strategy": "insert-only",
+    }
+    incremental = sql_table_kwargs["incremental"]
+    assert incremental.cursor_path == "raw_dlt_load_id"
+    assert incremental.initial_value == "1783955745.5023258"
+    assert incremental.range_start == "open"
 
 
 def test_unl_routes_are_configured() -> None:
@@ -521,11 +574,16 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
 
         def execute(self, query: str) -> None:
             calls["execute"].append(query)
+            self.query = query
 
         def copy_expert(self, query: str, file) -> None:
             calls["copy"].append(query)
 
-        def fetchone(self) -> tuple[int]:
+        def fetchone(self):
+            if "to_regclass('typed.unl_fym_policy')" in self.query:
+                return (True, True)
+            if "max(coalesce(raw_dlt_load_id" in self.query:
+                return ("1783955745.5023258",)
             return (42,)
 
     class FakeConnection:
@@ -543,6 +601,15 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
 
     monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
     monkeypatch.setattr("dlt_pipelines.db._connect_roster_source", lambda: FakeConnection())
+    monkeypatch.setattr(
+        "dlt_pipelines.db._postgres_sqlalchemy_credentials",
+        lambda: "postgresql+psycopg2://source",
+    )
+    typed_pipeline_calls = []
+    monkeypatch.setattr(
+        "dlt_pipelines.pipelines.typed.run_unl_fym_policy_typed_pipeline",
+        lambda **kwargs: typed_pipeline_calls.append(kwargs),
+    )
 
     result = refresh_typed_dataset("unl")
 
@@ -551,41 +618,63 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     assert result.schema_name == "typed"
     assert result.table_name == "unl_fym_policy"
     assert result.row_count == 42
-    assert len(calls["commit_at"]) == 2
+    assert len(calls["commit_at"]) == 3
+    assert typed_pipeline_calls == [
+        {
+            "source_credentials": "postgresql+psycopg2://source",
+            "initial_load_id": "1783955745.5023258",
+        }
+    ]
     assert calls["closed"] is True
     assert len(calls["copy"]) == 12
     assert any(query.startswith("CREATE SCHEMA IF NOT EXISTS typed") for query in executed_sql)
-    assert any(query.startswith("TRUNCATE TABLE typed.unl_fym_policy") for query in executed_sql)
-    assert any(query.startswith("INSERT INTO typed.unl_fym_policy") for query in executed_sql)
-    first_commit_position = calls["commit_at"][0]
-    first_truncate_position = executed_sql.index("TRUNCATE TABLE typed.unl_fym_policy")
+    assert "TRUNCATE TABLE typed.unl_fym_policy" not in executed_sql
+    assert not any(query.startswith("INSERT INTO typed.unl_fym_policy ") for query in executed_sql)
+    assert any(
+        query.startswith("CREATE OR REPLACE VIEW raw.unl_fym_policy_typed_source")
+        for query in executed_sql
+    )
+    schema_commit_position = calls["commit_at"][1]
+    first_truncate_position = executed_sql.index(
+        "TRUNCATE TABLE typed.unl_weekly_advance_statements"
+    )
     latest_view_positions = [
         index
         for index, query in enumerate(executed_sql)
         if query.startswith("CREATE OR REPLACE VIEW ")
     ]
     assert latest_view_positions
-    assert max(latest_view_positions) < first_commit_position <= first_truncate_position
+    assert max(latest_view_positions) < schema_commit_position <= first_truncate_position
     assert any(
         query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_fym_policy_change_history")
         for query in executed_sql
     )
-    assert "TRUNCATE TABLE typed.unl_fym_policy_change_history" in executed_sql
+    assert "TRUNCATE TABLE typed.unl_fym_policy_change_history" not in executed_sql
+    history_reset_sql = next(
+        query
+        for query in executed_sql
+        if query.startswith("WITH pending_rows AS")
+        and "DELETE FROM typed.unl_fym_policy_change_history" in query
+    )
+    assert "out_of_order_policies AS" in history_reset_sql
+    assert "first_pending_file_date <= processed.last_processed_file_date" in history_reset_sql
     history_insert_sql = next(
         query
         for query in executed_sql
         if query.startswith("INSERT INTO typed.unl_fym_policy_change_history")
     )
     assert "FROM typed.unl_fym_policy" in history_insert_sql
-    assert "AS previous_contract_code" in history_insert_sql
-    assert "AS contract_code_last_change_date" in history_insert_sql
-    assert "AS previous_at_risk_status" in history_insert_sql
-    assert "AS at_risk_policy_last_change_date" in history_insert_sql
+    assert "WITH pending_rows AS" in history_insert_sql
+    assert "affected_policies AS" in history_insert_sql
+    assert "prior_rows AS" in history_insert_sql
+    assert "WHERE h._dlt_id IS NULL" in history_insert_sql
+    assert "WHERE is_new" in history_insert_sql
+    assert "ON CONFLICT (_dlt_id) DO NOTHING" in history_insert_sql
     assert "lag(cntrct_code) OVER history_window" in history_insert_sql
     assert "lag(at_risk_policy) OVER history_window" in history_insert_sql
-    assert "array_agg(previous_contract_observation) FILTER" in history_insert_sql
+    assert "array_agg(contract_event_previous_value) FILTER" in history_insert_sql
     assert "cntrct_code IS DISTINCT FROM previous_contract_observation" in history_insert_sql
-    assert "array_agg(previous_at_risk_observation) FILTER" in history_insert_sql
+    assert "array_agg(at_risk_event_previous_value) FILTER" in history_insert_sql
     assert "at_risk_policy IS DISTINCT FROM previous_at_risk_observation" in history_insert_sql
     assert any(
         query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements")

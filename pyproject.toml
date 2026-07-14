@@ -5,9 +5,10 @@ description = "DLT ETL pipelines for loading source data into PostgreSQL."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "dlt[postgres,s3,sftp]>=1.27.2",
+    "dlt[postgres,s3,sftp,sql_database]>=1.27.2",
     "fsspec>=2024.0.0",
     "pandas>=3.0.3",
+    "pyarrow>=25.0.0",
 ]
 
 [project.scripts]
