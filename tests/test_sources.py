@@ -7,6 +7,7 @@ from dlt_pipelines.db import (
     FileAuditEvent,
     _heartland_inforced_policy_typed_select,
     _heartland_typed_refresh_statements,
+    _unl_fym_policy_typed_select,
     check_unl_fym_policy_loaded,
     check_postgres_connection,
     record_file_events,
@@ -193,6 +194,16 @@ def test_unl_typed_pipeline_uses_sql_cursor_and_insert_only_merge(monkeypatch) -
     assert incremental.cursor_path == "raw_dlt_load_id"
     assert incremental.initial_value == "1783955745.5023258"
     assert incremental.range_start == "open"
+
+
+def test_unl_typed_select_preserves_required_dlt_columns() -> None:
+    select_sql = _unl_fym_policy_typed_select()
+
+    assert "p._dlt_load_id AS _dlt_load_id" in select_sql
+    assert "p._dlt_id AS _dlt_id" in select_sql
+    assert "p._dlt_load_id AS raw_dlt_load_id" in select_sql
+    assert "p._dlt_id AS raw_dlt_id" in select_sql
+    assert "at_risk_policy,\n    _dlt_load_id,\n    _dlt_id\nFROM enriched_rows" in select_sql
 
 
 def test_unl_routes_are_configured() -> None:

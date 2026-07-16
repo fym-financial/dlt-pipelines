@@ -1135,6 +1135,8 @@ WITH base AS (
         p.last_name,
         p.phone_nbr,
         p._source_file,
+        p._dlt_load_id AS _dlt_load_id,
+        p._dlt_id AS _dlt_id,
         p._dlt_load_id AS raw_dlt_load_id,
         p._dlt_id AS raw_dlt_id,
         p.cntrct_reason,
@@ -1213,20 +1215,66 @@ typed_rows AS (
         CASE
             WHEN file_date_text ~ '^\\d{8}$'
             THEN to_date(file_date_text, 'YYYYMMDD')
-        END AS file_date
+        END AS file_date,
+        _dlt_load_id,
+        _dlt_id
     FROM base
+),
+enriched_rows AS (
+    SELECT
+        typed_rows.*,
+        (
+            cntrct_code = 'A'
+            AND billing_form = 'DIR'
+            AND billing_mode = 3
+            AND paid_to_date IS NOT NULL
+            AND file_date IS NOT NULL
+            AND paid_to_date < file_date
+        ) AS at_risk_policy
+    FROM typed_rows
 )
 SELECT
-    typed_rows.*,
-    (
-        cntrct_code = 'A'
-        AND billing_form = 'DIR'
-        AND billing_mode = 3
-        AND paid_to_date IS NOT NULL
-        AND file_date IS NOT NULL
-        AND paid_to_date < file_date
-    ) AS at_risk_policy
-FROM typed_rows
+    mga,
+    mga_name,
+    ga,
+    ga_name,
+    wa,
+    wa_name,
+    agent_ga_level_01,
+    agent_level_02,
+    agent_level_03,
+    agent_level_04,
+    agent_level_05,
+    agent_level_06,
+    agent_level_07,
+    agent_level_08,
+    agent_level_09,
+    agent_level_10,
+    plan_code,
+    issue_date,
+    cntrct_code,
+    app_recvd_date,
+    annual_premium,
+    issue_state,
+    policy_nbr,
+    paid_to_date,
+    billing_mode,
+    first_name,
+    last_name,
+    zip,
+    phone_nbr,
+    _source_file,
+    raw_dlt_load_id,
+    raw_dlt_id,
+    cntrct_reason,
+    cntrct_date,
+    billing_form,
+    term_date,
+    file_date,
+    at_risk_policy,
+    _dlt_load_id,
+    _dlt_id
+FROM enriched_rows
 """
 
 
