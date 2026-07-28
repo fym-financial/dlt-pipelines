@@ -5,6 +5,7 @@ from urllib.error import HTTPError
 
 from dlt_pipelines.db import (
     FileAuditEvent,
+    _heartland_hnl_status_history_select,
     _heartland_inforced_policy_typed_select,
     _heartland_typed_refresh_statements,
     _unl_fym_policy_typed_select,
@@ -134,14 +135,34 @@ def test_heartland_typed_select_applies_conservative_types() -> None:
     assert "raw.heartland_inforced_policy_snapshot" in refresh_sql
     assert "CREATE TABLE IF NOT EXISTS raw.heartland_inforced_policy" in refresh_sql
     assert "CREATE TABLE IF NOT EXISTS typed.heartland_inforced_policy" in refresh_sql
+    assert (
+        "CREATE TABLE IF NOT EXISTS "
+        "typed.heartland_inforced_policy_status_history"
+    ) in refresh_sql
     assert "ON CONFLICT (_row_hash) DO NOTHING" in refresh_sql
     assert "ON CONFLICT (raw_row_hash) DO NOTHING" in refresh_sql
     assert "CREATE OR REPLACE VIEW typed.heartland_inforced_policy_latest" in refresh_sql
+    assert "status_history.previous_hnl_status" in refresh_sql
+    assert "status_history.previous_hnl_status_date" in refresh_sql
     assert "TRUNCATE TABLE raw.heartland_inforced_policy" not in refresh_sql
     assert "TRUNCATE TABLE typed.heartland_inforced_policy" not in refresh_sql
+    assert "TRUNCATE TABLE typed.heartland_inforced_policy_status_history" not in refresh_sql
     assert " DO UPDATE" not in refresh_sql
     assert "DELETE FROM raw.heartland_inforced_policy" not in refresh_sql
     assert "DELETE FROM typed.heartland_inforced_policy" not in refresh_sql
+
+
+def test_heartland_status_history_tracks_distinct_status_changes() -> None:
+    history_sql = _heartland_hnl_status_history_select()
+
+    assert "PARTITION BY p.pol_no, p.agt_code, p.writing_split" in history_sql
+    assert "ORDER BY p.first_seen_at, p.raw_row_hash" in history_sql
+    assert "lag(p.hnl_status) OVER history_window" in history_sql
+    assert "hnl_status IS DISTINCT FROM previous_status_observation" in history_sql
+    assert "array_agg(previous_status_observation) FILTER" in history_sql
+    assert "max(first_seen_at::date) FILTER" in history_sql
+    assert "AS previous_hnl_status" in history_sql
+    assert "AS previous_hnl_status_date" in history_sql
 
 
 def test_unl_typed_pipeline_uses_sql_cursor_and_insert_only_merge(monkeypatch) -> None:

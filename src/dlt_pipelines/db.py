@@ -1626,6 +1626,7 @@ CROSS JOIN file_bounds
 
 def _heartland_typed_refresh_statements() -> tuple[str, ...]:
     typed_select = _heartland_inforced_policy_typed_select()
+    status_history_select = _heartland_hnl_status_history_select()
     return (
         "CREATE SCHEMA IF NOT EXISTS raw",
         "CREATE SCHEMA IF NOT EXISTS typed",
@@ -1659,6 +1660,25 @@ def _heartland_typed_refresh_statements() -> tuple[str, ...]:
             ") ON CONFLICT (raw_row_hash) DO NOTHING"
         ),
         (
+            "CREATE TABLE IF NOT EXISTS "
+            "typed.heartland_inforced_policy_status_history AS "
+            f"{status_history_select} WITH NO DATA"
+        ),
+        (
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "heartland_inforced_policy_status_history_row_hash_idx "
+            "ON typed.heartland_inforced_policy_status_history (raw_row_hash)"
+        ),
+        (
+            "INSERT INTO typed.heartland_inforced_policy_status_history "
+            f"SELECT status_rows.* FROM ({status_history_select}) AS status_rows "
+            "WHERE NOT EXISTS ("
+            "SELECT 1 "
+            "FROM typed.heartland_inforced_policy_status_history AS existing "
+            "WHERE existing.raw_row_hash = status_rows.raw_row_hash"
+            ") ON CONFLICT (raw_row_hash) DO NOTHING"
+        ),
+        (
             "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_pol_no_idx "
             "ON typed.heartland_inforced_policy (pol_no)"
         ),
@@ -1678,12 +1698,15 @@ def _heartland_typed_refresh_statements() -> tuple[str, ...]:
             "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_eff_date_idx "
             "ON typed.heartland_inforced_policy (eff_date)"
         ),
-        "CREATE OR REPLACE VIEW typed.heartland_inforced_policy_latest AS "
-        "SELECT DISTINCT ON (pol_no, agt_code, writing_split) * "
-        "FROM typed.heartland_inforced_policy "
-        "ORDER BY pol_no, agt_code, writing_split, first_seen_at DESC, raw_row_hash DESC",
+        (
+            "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_history_order_idx "
+            "ON typed.heartland_inforced_policy "
+            "(pol_no, agt_code, writing_split, first_seen_at, raw_row_hash)"
+        ),
+        _heartland_inforced_policy_latest_view_statement(),
         "ANALYZE raw.heartland_inforced_policy",
         "ANALYZE typed.heartland_inforced_policy",
+        "ANALYZE typed.heartland_inforced_policy_status_history",
     )
 
 
@@ -1890,6 +1913,72 @@ SELECT
     raw_row_hash,
     first_seen_at
 FROM base
+"""
+
+
+def _heartland_hnl_status_history_select() -> str:
+    return """
+WITH sequenced_rows AS (
+    SELECT
+        p.raw_row_hash,
+        p.pol_no,
+        p.agt_code,
+        p.writing_split,
+        p.hnl_status,
+        p.first_seen_at,
+        row_number() OVER history_window AS observation_number,
+        lag(p.hnl_status) OVER history_window AS previous_status_observation
+    FROM typed.heartland_inforced_policy AS p
+    WINDOW history_window AS (
+        PARTITION BY p.pol_no, p.agt_code, p.writing_split
+        ORDER BY p.first_seen_at, p.raw_row_hash
+    )
+),
+history_rows AS (
+    SELECT
+        sequenced_rows.*,
+        array_agg(previous_status_observation) FILTER (
+            WHERE observation_number > 1
+              AND hnl_status IS DISTINCT FROM previous_status_observation
+        ) OVER history_window AS previous_hnl_statuses,
+        max(first_seen_at::date) FILTER (
+            WHERE observation_number > 1
+              AND hnl_status IS DISTINCT FROM previous_status_observation
+        ) OVER history_window AS previous_hnl_status_date
+    FROM sequenced_rows
+    WINDOW history_window AS (
+        PARTITION BY pol_no, agt_code, writing_split
+        ORDER BY first_seen_at, raw_row_hash
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    )
+)
+SELECT
+    raw_row_hash,
+    previous_hnl_statuses[cardinality(previous_hnl_statuses)] AS previous_hnl_status,
+    previous_hnl_status_date
+FROM history_rows
+"""
+
+
+def _heartland_inforced_policy_latest_view_statement() -> str:
+    return """CREATE OR REPLACE VIEW typed.heartland_inforced_policy_latest AS
+WITH latest_rows AS (
+    SELECT DISTINCT ON (pol_no, agt_code, writing_split) *
+    FROM typed.heartland_inforced_policy
+    ORDER BY
+        pol_no,
+        agt_code,
+        writing_split,
+        first_seen_at DESC,
+        raw_row_hash DESC
+)
+SELECT
+    latest_rows.*,
+    status_history.previous_hnl_status,
+    status_history.previous_hnl_status_date
+FROM latest_rows
+LEFT JOIN typed.heartland_inforced_policy_status_history AS status_history
+  ON status_history.raw_row_hash = latest_rows.raw_row_hash
 """
 
 
