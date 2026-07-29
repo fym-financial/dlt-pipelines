@@ -138,9 +138,9 @@ The typed table is also insert-only. It converts business dates to PostgreSQL
 also corrects the API's reversed `clientState` and `clientZip` values. Use
 `typed.heartland_inforced_policy_latest` for the newest observed version of
 each policy/agent/writing-split combination. The latest view also includes
-`previous_hnl_status` and `previous_hnl_status_date`. The date is the observation
-date when the current `hnl_status` first changed from the previous distinct
-status; both fields are null until a status change is observed.
+`previous_hnl_status` and `previous_hnl_status_date`. The date is the date of
+the last observation carrying the previous distinct status, measured in UTC;
+both fields are null until a status change is observed.
 
 To load only the disposable API snapshot without promoting it into canonical
 raw and typed history:

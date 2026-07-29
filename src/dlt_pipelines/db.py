@@ -1670,6 +1670,18 @@ def _heartland_typed_refresh_statements() -> tuple[str, ...]:
             "ON typed.heartland_inforced_policy_status_history (raw_row_hash)"
         ),
         (
+            "UPDATE typed.heartland_inforced_policy_status_history AS existing "
+            "SET previous_hnl_status = corrected.previous_hnl_status, "
+            "previous_hnl_status_date = corrected.previous_hnl_status_date "
+            f"FROM ({status_history_select}) AS corrected "
+            "WHERE existing.raw_row_hash = corrected.raw_row_hash "
+            "AND ("
+            "existing.previous_hnl_status IS DISTINCT FROM corrected.previous_hnl_status "
+            "OR existing.previous_hnl_status_date "
+            "IS DISTINCT FROM corrected.previous_hnl_status_date"
+            ")"
+        ),
+        (
             "INSERT INTO typed.heartland_inforced_policy_status_history "
             f"SELECT status_rows.* FROM ({status_history_select}) AS status_rows "
             "WHERE NOT EXISTS ("
@@ -1927,7 +1939,9 @@ WITH sequenced_rows AS (
         p.hnl_status,
         p.first_seen_at,
         row_number() OVER history_window AS observation_number,
-        lag(p.hnl_status) OVER history_window AS previous_status_observation
+        lag(p.hnl_status) OVER history_window AS previous_status_observation,
+        lag((p.first_seen_at AT TIME ZONE 'UTC')::date) OVER history_window
+            AS previous_status_observation_date
     FROM typed.heartland_inforced_policy AS p
     WINDOW history_window AS (
         PARTITION BY p.pol_no, p.agt_code, p.writing_split
@@ -1941,10 +1955,10 @@ history_rows AS (
             WHERE observation_number > 1
               AND hnl_status IS DISTINCT FROM previous_status_observation
         ) OVER history_window AS previous_hnl_statuses,
-        max(first_seen_at::date) FILTER (
+        array_agg(previous_status_observation_date) FILTER (
             WHERE observation_number > 1
               AND hnl_status IS DISTINCT FROM previous_status_observation
-        ) OVER history_window AS previous_hnl_status_date
+        ) OVER history_window AS previous_hnl_status_dates
     FROM sequenced_rows
     WINDOW history_window AS (
         PARTITION BY pol_no, agt_code, writing_split
@@ -1955,7 +1969,8 @@ history_rows AS (
 SELECT
     raw_row_hash,
     previous_hnl_statuses[cardinality(previous_hnl_statuses)] AS previous_hnl_status,
-    previous_hnl_status_date
+    previous_hnl_status_dates[cardinality(previous_hnl_status_dates)]
+        AS previous_hnl_status_date
 FROM history_rows
 """
 

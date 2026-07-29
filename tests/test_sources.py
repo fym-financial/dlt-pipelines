@@ -144,6 +144,15 @@ def test_heartland_typed_select_applies_conservative_types() -> None:
     assert "CREATE OR REPLACE VIEW typed.heartland_inforced_policy_latest" in refresh_sql
     assert "status_history.previous_hnl_status" in refresh_sql
     assert "status_history.previous_hnl_status_date" in refresh_sql
+    assert (
+        "UPDATE typed.heartland_inforced_policy_status_history AS existing"
+        in refresh_sql
+    )
+    assert (
+        "existing.previous_hnl_status_date "
+        "IS DISTINCT FROM corrected.previous_hnl_status_date"
+        in refresh_sql
+    )
     assert "TRUNCATE TABLE raw.heartland_inforced_policy" not in refresh_sql
     assert "TRUNCATE TABLE typed.heartland_inforced_policy" not in refresh_sql
     assert "TRUNCATE TABLE typed.heartland_inforced_policy_status_history" not in refresh_sql
@@ -158,9 +167,13 @@ def test_heartland_status_history_tracks_distinct_status_changes() -> None:
     assert "PARTITION BY p.pol_no, p.agt_code, p.writing_split" in history_sql
     assert "ORDER BY p.first_seen_at, p.raw_row_hash" in history_sql
     assert "lag(p.hnl_status) OVER history_window" in history_sql
+    assert (
+        "lag((p.first_seen_at AT TIME ZONE 'UTC')::date) OVER history_window"
+        in history_sql
+    )
     assert "hnl_status IS DISTINCT FROM previous_status_observation" in history_sql
     assert "array_agg(previous_status_observation) FILTER" in history_sql
-    assert "max(first_seen_at::date) FILTER" in history_sql
+    assert "array_agg(previous_status_observation_date) FILTER" in history_sql
     assert "AS previous_hnl_status" in history_sql
     assert "AS previous_hnl_status_date" in history_sql
 
