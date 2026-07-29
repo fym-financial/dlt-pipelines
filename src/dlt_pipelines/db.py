@@ -1627,6 +1627,7 @@ CROSS JOIN file_bounds
 def _heartland_typed_refresh_statements() -> tuple[str, ...]:
     typed_select = _heartland_inforced_policy_typed_select()
     status_history_select = _heartland_hnl_status_history_select()
+    hierarchy_select = _heartland_inforced_policy_hierarchy_select()
     return (
         "CREATE SCHEMA IF NOT EXISTS raw",
         "CREATE SCHEMA IF NOT EXISTS typed",
@@ -1651,6 +1652,10 @@ def _heartland_typed_refresh_statements() -> tuple[str, ...]:
             "CREATE UNIQUE INDEX IF NOT EXISTS heartland_inforced_policy_typed_row_hash_idx "
             "ON typed.heartland_inforced_policy (raw_row_hash)"
         ),
+        """CREATE TABLE IF NOT EXISTS typed.heartland_inforced_policy_hierarchy (
+            raw_row_hash text PRIMARY KEY,
+            roster_hierarchy_json jsonb
+        )""",
         (
             "INSERT INTO typed.heartland_inforced_policy "
             f"SELECT new_rows.* FROM ({typed_select}) AS new_rows "
@@ -1715,10 +1720,44 @@ def _heartland_typed_refresh_statements() -> tuple[str, ...]:
             "ON typed.heartland_inforced_policy "
             "(pol_no, agt_code, writing_split, first_seen_at, raw_row_hash)"
         ),
+        (
+            "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_latest_idx "
+            "ON typed.heartland_inforced_policy "
+            "(pol_no, agt_code, writing_split, first_seen_at DESC, raw_row_hash DESC)"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_agent_latest_idx "
+            "ON typed.heartland_inforced_policy "
+            "(agt_code, first_seen_at DESC, raw_row_hash DESC)"
+        ),
+        (
+            "CREATE TEMP TABLE heartland_inforced_policy_hierarchy_refresh "
+            f"ON COMMIT DROP AS {hierarchy_select}"
+        ),
+        """INSERT INTO typed.heartland_inforced_policy_hierarchy (
+            raw_row_hash,
+            roster_hierarchy_json
+        )
+        SELECT
+            raw_row_hash,
+            roster_hierarchy_json
+        FROM pg_temp.heartland_inforced_policy_hierarchy_refresh
+        WHERE true
+        ON CONFLICT (raw_row_hash) DO UPDATE
+        SET roster_hierarchy_json = EXCLUDED.roster_hierarchy_json
+        """,
+        """DELETE FROM typed.heartland_inforced_policy_hierarchy AS existing
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM pg_temp.heartland_inforced_policy_hierarchy_refresh AS refreshed
+            WHERE refreshed.raw_row_hash = existing.raw_row_hash
+        )
+        """,
         _heartland_inforced_policy_latest_view_statement(),
         "ANALYZE raw.heartland_inforced_policy",
         "ANALYZE typed.heartland_inforced_policy",
         "ANALYZE typed.heartland_inforced_policy_status_history",
+        "ANALYZE typed.heartland_inforced_policy_hierarchy",
     )
 
 
@@ -1975,6 +2014,122 @@ FROM history_rows
 """
 
 
+def _heartland_inforced_policy_hierarchy_select() -> str:
+    return """
+WITH RECURSIVE latest_policy AS (
+    SELECT DISTINCT ON (p.pol_no, p.agt_code, p.writing_split)
+        p.raw_row_hash,
+        p.agt_code,
+        p.upline
+    FROM typed.heartland_inforced_policy AS p
+    ORDER BY
+        p.pol_no,
+        p.agt_code,
+        p.writing_split,
+        p.first_seen_at DESC,
+        p.raw_row_hash DESC
+),
+latest_agent_observation AS (
+    SELECT DISTINCT ON (p.agt_code)
+        p.agt_code,
+        nullif(
+            concat_ws(
+                ' ',
+                nullif(trim(p.agt_first_name), ''),
+                nullif(trim(p.agt_last_name), '')
+            ),
+            ''
+        ) AS agent_name,
+        substring(p.upline from '-\\s*([0-9]+)\\s*$') AS upline_code,
+        nullif(
+            trim(regexp_replace(p.upline, '\\s*-\\s*[0-9]+\\s*$', '')),
+            ''
+        ) AS upline_name
+    FROM typed.heartland_inforced_policy AS p
+    WHERE nullif(trim(p.agt_code), '') IS NOT NULL
+    ORDER BY p.agt_code, p.first_seen_at DESC, p.raw_row_hash DESC
+),
+policy_seeds AS (
+    SELECT
+        p.raw_row_hash,
+        nullif(trim(p.agt_code), '') AS policy_agt_code,
+        substring(p.upline from '-\\s*([0-9]+)\\s*$') AS upline_code,
+        nullif(
+            trim(regexp_replace(p.upline, '\\s*-\\s*[0-9]+\\s*$', '')),
+            ''
+        ) AS upline_name
+    FROM latest_policy AS p
+),
+hierarchy_walk AS (
+    SELECT
+        seed.raw_row_hash,
+        0 AS traversal_depth,
+        seed.upline_code AS writing_number,
+        coalesce(upline_agent.agent_name, seed.upline_name, seed.upline_code) AS name,
+        upline_agent.upline_code AS next_upline_code,
+        upline_agent.upline_name AS next_upline_name,
+        array_remove(
+            ARRAY[seed.policy_agt_code, seed.upline_code]::text[],
+            NULL
+        ) AS visited_codes
+    FROM policy_seeds AS seed
+    LEFT JOIN latest_agent_observation AS upline_agent
+      ON upline_agent.agt_code = seed.upline_code
+    WHERE seed.upline_code IS NOT NULL
+      AND seed.upline_code IS DISTINCT FROM seed.policy_agt_code
+
+    UNION ALL
+
+    SELECT
+        hierarchy_walk.raw_row_hash,
+        hierarchy_walk.traversal_depth + 1,
+        hierarchy_walk.next_upline_code,
+        coalesce(
+            next_agent.agent_name,
+            hierarchy_walk.next_upline_name,
+            hierarchy_walk.next_upline_code
+        ),
+        next_agent.upline_code,
+        next_agent.upline_name,
+        hierarchy_walk.visited_codes || hierarchy_walk.next_upline_code
+    FROM hierarchy_walk
+    LEFT JOIN latest_agent_observation AS next_agent
+      ON next_agent.agt_code = hierarchy_walk.next_upline_code
+    WHERE hierarchy_walk.next_upline_code IS NOT NULL
+      AND NOT hierarchy_walk.next_upline_code = ANY(hierarchy_walk.visited_codes)
+      AND hierarchy_walk.traversal_depth < 99
+),
+renumbered_upline AS (
+    SELECT
+        raw_row_hash,
+        row_number() OVER (
+            PARTITION BY raw_row_hash
+            ORDER BY traversal_depth DESC
+        ) AS hierarchy_level,
+        name,
+        writing_number
+    FROM hierarchy_walk
+)
+SELECT
+    raw_row_hash,
+    jsonb_agg(
+        jsonb_build_object(
+            'depth',
+            lpad(hierarchy_level::text, 2, '0'),
+            'name',
+            name,
+            'writing_number',
+            writing_number,
+            'is_person',
+            true
+        )
+        ORDER BY hierarchy_level
+    ) AS roster_hierarchy_json
+FROM renumbered_upline
+GROUP BY raw_row_hash
+"""
+
+
 def _heartland_inforced_policy_latest_view_statement() -> str:
     return """CREATE OR REPLACE VIEW typed.heartland_inforced_policy_latest AS
 WITH latest_rows AS (
@@ -1990,10 +2145,13 @@ WITH latest_rows AS (
 SELECT
     latest_rows.*,
     status_history.previous_hnl_status,
-    status_history.previous_hnl_status_date
+    status_history.previous_hnl_status_date,
+    hierarchy.roster_hierarchy_json
 FROM latest_rows
 LEFT JOIN typed.heartland_inforced_policy_status_history AS status_history
   ON status_history.raw_row_hash = latest_rows.raw_row_hash
+LEFT JOIN typed.heartland_inforced_policy_hierarchy AS hierarchy
+  ON hierarchy.raw_row_hash = latest_rows.raw_row_hash
 """
 
 

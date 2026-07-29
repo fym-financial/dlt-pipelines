@@ -6,6 +6,7 @@ from urllib.error import HTTPError
 from dlt_pipelines.db import (
     FileAuditEvent,
     _heartland_hnl_status_history_select,
+    _heartland_inforced_policy_hierarchy_select,
     _heartland_inforced_policy_typed_select,
     _heartland_typed_refresh_statements,
     _unl_fym_policy_typed_select,
@@ -131,7 +132,8 @@ def test_heartland_typed_select_applies_conservative_types() -> None:
     assert "p.plan::text" in select_sql
     assert "p.draft_day::text" in select_sql
 
-    refresh_sql = "\n".join(_heartland_typed_refresh_statements())
+    refresh_statements = _heartland_typed_refresh_statements()
+    refresh_sql = "\n".join(refresh_statements)
     assert "raw.heartland_inforced_policy_snapshot" in refresh_sql
     assert "CREATE TABLE IF NOT EXISTS raw.heartland_inforced_policy" in refresh_sql
     assert "CREATE TABLE IF NOT EXISTS typed.heartland_inforced_policy" in refresh_sql
@@ -139,11 +141,20 @@ def test_heartland_typed_select_applies_conservative_types() -> None:
         "CREATE TABLE IF NOT EXISTS "
         "typed.heartland_inforced_policy_status_history"
     ) in refresh_sql
+    assert (
+        "CREATE TABLE IF NOT EXISTS typed.heartland_inforced_policy_hierarchy"
+        in refresh_sql
+    )
     assert "ON CONFLICT (_row_hash) DO NOTHING" in refresh_sql
     assert "ON CONFLICT (raw_row_hash) DO NOTHING" in refresh_sql
     assert "CREATE OR REPLACE VIEW typed.heartland_inforced_policy_latest" in refresh_sql
     assert "status_history.previous_hnl_status" in refresh_sql
     assert "status_history.previous_hnl_status_date" in refresh_sql
+    assert "hierarchy.roster_hierarchy_json" in refresh_sql
+    assert (
+        "LEFT JOIN typed.heartland_inforced_policy_hierarchy AS hierarchy"
+        in refresh_sql
+    )
     assert (
         "UPDATE typed.heartland_inforced_policy_status_history AS existing"
         in refresh_sql
@@ -156,9 +167,15 @@ def test_heartland_typed_select_applies_conservative_types() -> None:
     assert "TRUNCATE TABLE raw.heartland_inforced_policy" not in refresh_sql
     assert "TRUNCATE TABLE typed.heartland_inforced_policy" not in refresh_sql
     assert "TRUNCATE TABLE typed.heartland_inforced_policy_status_history" not in refresh_sql
-    assert " DO UPDATE" not in refresh_sql
-    assert "DELETE FROM raw.heartland_inforced_policy" not in refresh_sql
-    assert "DELETE FROM typed.heartland_inforced_policy" not in refresh_sql
+    typed_history_insert = next(
+        statement
+        for statement in refresh_statements
+        if statement.startswith("INSERT INTO typed.heartland_inforced_policy ")
+    )
+    assert "ON CONFLICT (raw_row_hash) DO NOTHING" in typed_history_insert
+    assert "DO UPDATE" not in typed_history_insert
+    assert "DELETE FROM raw.heartland_inforced_policy AS" not in refresh_sql
+    assert "DELETE FROM typed.heartland_inforced_policy AS" not in refresh_sql
 
 
 def test_heartland_status_history_tracks_distinct_status_changes() -> None:
@@ -176,6 +193,52 @@ def test_heartland_status_history_tracks_distinct_status_changes() -> None:
     assert "array_agg(previous_status_observation_date) FILTER" in history_sql
     assert "AS previous_hnl_status" in history_sql
     assert "AS previous_hnl_status_date" in history_sql
+
+
+def test_heartland_hierarchy_matches_unl_json_shape_and_is_precomputed() -> None:
+    hierarchy_sql = _heartland_inforced_policy_hierarchy_select()
+    refresh_sql = "\n".join(_heartland_typed_refresh_statements())
+
+    assert "WITH RECURSIVE latest_policy AS" in hierarchy_sql
+    assert "SELECT DISTINCT ON (p.agt_code)" in hierarchy_sql
+    assert "substring(p.upline from '-\\s*([0-9]+)\\s*$')" in hierarchy_sql
+    assert (
+        "regexp_replace(p.upline, '\\s*-\\s*[0-9]+\\s*$', '')"
+        in hierarchy_sql
+    )
+    assert "seed.upline_code IS DISTINCT FROM seed.policy_agt_code" in hierarchy_sql
+    assert "ARRAY[seed.policy_agt_code, seed.upline_code]::text[]" in hierarchy_sql
+    assert "NOT hierarchy_walk.next_upline_code = ANY(" in hierarchy_sql
+    assert "hierarchy_walk.traversal_depth < 99" in hierarchy_sql
+    assert "ORDER BY traversal_depth DESC" in hierarchy_sql
+    assert "lpad(hierarchy_level::text, 2, '0')" in hierarchy_sql
+    assert "'depth'," in hierarchy_sql
+    assert "'name'," in hierarchy_sql
+    assert "'writing_number'," in hierarchy_sql
+    assert "'is_person'," in hierarchy_sql
+    assert "true" in hierarchy_sql
+
+    assert (
+        "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_latest_idx"
+        in refresh_sql
+    )
+    assert (
+        "CREATE INDEX IF NOT EXISTS heartland_inforced_policy_agent_latest_idx"
+        in refresh_sql
+    )
+    assert (
+        "CREATE TEMP TABLE heartland_inforced_policy_hierarchy_refresh"
+        in refresh_sql
+    )
+    assert (
+        "INSERT INTO typed.heartland_inforced_policy_hierarchy"
+        in refresh_sql
+    )
+    assert "ON CONFLICT (raw_row_hash) DO UPDATE" in refresh_sql
+    assert (
+        "DELETE FROM typed.heartland_inforced_policy_hierarchy AS existing"
+        in refresh_sql
+    )
 
 
 def test_unl_typed_pipeline_uses_sql_cursor_and_insert_only_merge(monkeypatch) -> None:

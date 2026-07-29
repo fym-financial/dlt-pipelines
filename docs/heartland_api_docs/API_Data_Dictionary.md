@@ -97,7 +97,9 @@ The load process maintains insert-only row-version history:
 - `raw.heartland_inforced_policy`: canonical insert-only history. A deterministic hash across all 36 business fields prevents exact row versions from being appended more than once.
 - `typed.heartland_inforced_policy`: insert-only typed history. Dates are PostgreSQL `date`; `premium` and `share` are `numeric`; `iss_age` is `smallint`; all other business fields remain text.
 - `typed.heartland_inforced_policy_status_history`: insert-only status-change attributes for each typed row version.
-- `typed.heartland_inforced_policy_latest`: newest observed version for each `pol_no`, `agt_code`, and `writing_split` combination. It includes `previous_hnl_status` and `previous_hnl_status_date`; the date is the UTC date of the last observation carrying the previous distinct status.
+- `typed.heartland_inforced_policy_hierarchy`: precomputed upline hierarchy JSON for the newest observed policy row versions.
+- `typed.heartland_inforced_policy_latest`: newest observed version for each `pol_no`, `agt_code`, and `writing_split` combination. It includes `previous_hnl_status`, `previous_hnl_status_date`, and `roster_hierarchy_json`; the status date is the UTC date of the last observation carrying the previous distinct status.
+- `roster_hierarchy_json` contains upline agents only, ordered from the highest resolved upline to the immediate upline. Its node keys match UNL: zero-padded string `depth`, string `name`, string `writing_number`, and boolean `is_person`.
 - The typed table maps raw `client_zip` to `client_state` and raw `client_state` to `client_zip` to correct the API's reversed payload values.
 - Empty strings become `NULL` in typed data. Invalid dates and invalid numeric values also become `NULL` rather than failing the full load.
 - Canonical raw and typed rows are never updated or deleted by this process. An unchanged response appends zero rows; a changed policy is appended as a new version.

@@ -140,7 +140,12 @@ also corrects the API's reversed `clientState` and `clientZip` values. Use
 each policy/agent/writing-split combination. The latest view also includes
 `previous_hnl_status` and `previous_hnl_status_date`. The date is the date of
 the last observation carrying the previous distinct status, measured in UTC;
-both fields are null until a status change is observed.
+both fields are null until a status change is observed. Its
+`roster_hierarchy_json` column contains the resolved upline agents, ordered
+from the highest upline to the immediate upline. Each node uses the same
+`depth`, `name`, `writing_number`, and `is_person` keys as the UNL hierarchy
+JSON. The hierarchy is precomputed during refresh so querying the latest view
+does not execute the recursive traversal.
 
 To load only the disposable API snapshot without promoting it into canonical
 raw and typed history:
