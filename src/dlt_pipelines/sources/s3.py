@@ -216,10 +216,12 @@ def _read_csv_with_file_errors(
     kwargs = {"header": "infer", "chunksize": chunksize, **pandas_kwargs}
     for file_obj in items:
         file_name = str(file_obj.get("file_name") or file_obj.get("file_url") or file_obj)
+        source_modified_at = file_obj.get("modification_date")
         try:
             with file_obj.open() as file:
                 for df in pd.read_csv(file, **kwargs):
                     df["_source_file"] = file_name
+                    df["_source_modified_at"] = source_modified_at
                     yield df.to_dict(orient="records")
         except Exception as exc:
             print(f"Skipping CSV file {file_name}: {exc}", file=sys.stderr)

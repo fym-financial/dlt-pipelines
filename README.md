@@ -186,6 +186,24 @@ for the policies affected by that out-of-order backfill.
 After a successful `load-s3`, matching landed files are moved into an `Archive`
 subdirectory beside their current B2/S3 location.
 
+## AHL S3 Flow
+
+AHL files arrive directly in the shared S3-compatible landing bucket; there is
+no AHL SFTP transfer stage. Configure
+`SFTP_PROVIDERS__AHL__S3__LANDING__BUCKET_URL` with that bucket URL, then run:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline load-s3 ahl
+```
+
+CSV files directly under `ahl/inbound` load into `raw.ahl_fym_policy`, refresh
+the separate `typed.ahl_fym_policy` history and latest-load objects, and then
+move to `ahl/inbound/Archive`. All AHL source fields are retained. The source
+object modification timestamp supplies `file_date`, and the DLT load timestamp
+is used only as a fallback. `at_risk_policy` is currently always false. Roster
+hierarchy enrichment is intentionally left as a TODO until the AHL hierarchy
+mapping is defined.
+
 For the complete operational command sequence, see
 [`docs/unl-runbook.md`](docs/unl-runbook.md).
 

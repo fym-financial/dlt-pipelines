@@ -21,6 +21,22 @@ def test_refresh_typed_command_prints_result(monkeypatch, capsys) -> None:
     assert "Refreshed typed.unl_fym_policy for provider unl with 99 row(s)." in captured.out
 
 
+def test_refresh_typed_command_supports_ahl(monkeypatch, capsys) -> None:
+    class Result:
+        provider = "ahl"
+        schema_name = "typed"
+        table_name = "ahl_fym_policy"
+        row_count = 1921
+
+    monkeypatch.setattr(cli, "refresh_typed_dataset", lambda provider: Result())
+    monkeypatch.setattr(sys, "argv", ["dlt-pipeline", "refresh-typed", "ahl"])
+
+    cli.main()
+
+    captured = capsys.readouterr()
+    assert "Refreshed typed.ahl_fym_policy for provider ahl with 1921 row(s)." in captured.out
+
+
 def test_load_heartland_loads_raw_and_refreshes_typed(monkeypatch, capsys) -> None:
     calls = {}
 

@@ -8,6 +8,13 @@ workers = 1
 workers = 1
 parallelism_strategy = "sequential"
 
+[[sftp_providers.ahl.routes]]
+name = "fym_policy"
+file_glob = "ahl/inbound/*.csv"
+parser = "csv"
+table_name = "ahl_fym_policy"
+parser_options = { dtype = "string" }
+
 [[sftp_providers.unl.routes]]
 name = "fym_policy"
 file_glob = "unl/inbound/FYM_Policy_*.csv"

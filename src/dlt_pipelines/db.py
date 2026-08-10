@@ -333,6 +333,8 @@ def check_unl_fym_policy_loaded(
 def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
     if provider == "heartland":
         return _refresh_heartland_typed_dataset()
+    if provider == "ahl":
+        return _refresh_ahl_typed_dataset()
     if provider != "unl":
         raise RuntimeError(f"Typed refresh is not configured for provider '{provider}'.")
 
@@ -380,6 +382,32 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
         provider=provider,
         schema_name="typed",
         table_name="unl_fym_policy",
+        row_count=row_count,
+    )
+
+
+def _refresh_ahl_typed_dataset() -> TypedRefreshResult:
+    """Append AHL policy rows and rebuild its derived typed objects."""
+    from dlt_pipelines.pipelines.ahl import ahl_typed_refresh_statements
+
+    connection = _connect()
+    try:
+        with connection.cursor() as cursor:
+            for statement in ahl_typed_refresh_statements():
+                cursor.execute(statement)
+            cursor.execute("SELECT count(*) FROM typed.ahl_fym_policy")
+            row_count = int(cursor.fetchone()[0])
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    return TypedRefreshResult(
+        provider="ahl",
+        schema_name="typed",
+        table_name="ahl_fym_policy",
         row_count=row_count,
     )
 
