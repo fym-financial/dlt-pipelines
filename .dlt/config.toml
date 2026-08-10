@@ -13,7 +13,7 @@ name = "fym_policy"
 file_glob = "ahl/inbound/*.csv"
 parser = "csv"
 table_name = "ahl_fym_policy"
-parser_options = { dtype = "string" }
+parser_options = { dtype = "string", keep_default_na = false }
 
 [[sftp_providers.unl.routes]]
 name = "fym_policy"

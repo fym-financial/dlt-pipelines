@@ -171,6 +171,9 @@ def ahl_typed_refresh_statements() -> tuple[str, ...]:
     columns = ", ".join(AHL_TYPED_POLICY_COLUMNS)
     return (
         "CREATE SCHEMA IF NOT EXISTS typed",
+        # DLT may omit an all-null CSV column. The current AHL sample has no
+        # populated At Risk values, so guarantee the retained raw field exists.
+        "ALTER TABLE raw.ahl_fym_policy ADD COLUMN IF NOT EXISTS at_risk text",
         f"CREATE TABLE IF NOT EXISTS typed.ahl_fym_policy AS {typed_select} WITH NO DATA",
         (
             "CREATE UNIQUE INDEX IF NOT EXISTS ahl_fym_policy_typed_dlt_id_idx "

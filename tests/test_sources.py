@@ -372,7 +372,7 @@ def test_ahl_route_accepts_csv_files_directly_under_inbound() -> None:
             file_glob="ahl/inbound/*.csv",
             parser="csv",
             table_name="ahl_fym_policy",
-            parser_options={"dtype": "string"},
+            parser_options={"dtype": "string", "keep_default_na": False},
         )
     ]
 
@@ -395,6 +395,10 @@ def test_ahl_typed_select_retains_source_fields_and_defers_tbd_rules() -> None:
     ):
         assert column in AHL_TYPED_POLICY_COLUMNS
     assert "FROM raw.ahl_fym_policy AS p" in select_sql
+    assert (
+        "ALTER TABLE raw.ahl_fym_policy ADD COLUMN IF NOT EXISTS at_risk text"
+        in refresh_sql
+    )
     assert "_source_modified_at::date" in select_sql
     assert "false AS at_risk_policy" in select_sql
     assert "CREATE OR REPLACE VIEW raw.ahl_fym_policy_latest_load" in refresh_sql
