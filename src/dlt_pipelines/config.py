@@ -72,6 +72,18 @@ def get_provider_routes(provider: str) -> list[dict[str, Any]]:
     return routes
 
 
+def get_provider_s3_landing_bucket_url(provider: str) -> str:
+    """Return the provider landing bucket, sharing UNL's bucket with AHL."""
+    bucket_provider = "unl" if provider == "ahl" else provider
+    value = get_provider_setting(
+        bucket_provider,
+        ("s3", "landing", "bucket_url"),
+        required=True,
+    )
+    assert value is not None
+    return value
+
+
 def ensure_env_from_setting(env_name: str, toml_path: tuple[str, ...]) -> None:
     if os.getenv(env_name):
         return

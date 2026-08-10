@@ -14,7 +14,12 @@ import fsspec
 from dlt.sources import TDataItems
 from dlt.sources.filesystem import FileItemDict, filesystem, read_jsonl, read_parquet
 
-from dlt_pipelines.config import ensure_env_from_setting, get_provider_routes, get_provider_setting
+from dlt_pipelines.config import (
+    ensure_env_from_setting,
+    get_provider_routes,
+    get_provider_s3_landing_bucket_url,
+    get_provider_setting,
+)
 from dlt_pipelines.transfers import s3_options_from_env
 
 
@@ -43,11 +48,7 @@ def landed_csv_files(provider: str | None = None) -> object:
     if not provider:
         raise RuntimeError("A provider name is required to load landed S3 files.")
 
-    bucket_url = get_provider_setting(
-        provider,
-        ("s3", "landing", "bucket_url"),
-        required=True,
-    )
+    bucket_url = get_provider_s3_landing_bucket_url(provider)
     routes = _routes_for_provider(provider)
     _ensure_aws_environment()
     matching_routes = _routes_with_matches(bucket_url, routes)

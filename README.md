@@ -189,8 +189,8 @@ subdirectory beside their current B2/S3 location.
 ## AHL S3 Flow
 
 AHL files arrive directly in the shared S3-compatible landing bucket; there is
-no AHL SFTP transfer stage. Configure
-`SFTP_PROVIDERS__AHL__S3__LANDING__BUCKET_URL` with that bucket URL, then run:
+no AHL SFTP transfer stage. AHL automatically reuses UNL's configured landing
+bucket URL. Run:
 
 ```bash
 infisical run --env=dev -- uv run dlt-pipeline load-s3 ahl

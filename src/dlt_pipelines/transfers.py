@@ -10,7 +10,12 @@ from dataclasses import dataclass
 
 import fsspec
 
-from dlt_pipelines.config import get_provider_setting, get_provider_setting_list, get_setting
+from dlt_pipelines.config import (
+    get_provider_s3_landing_bucket_url,
+    get_provider_setting,
+    get_provider_setting_list,
+    get_setting,
+)
 
 COPY_BUFFER_SIZE = 8 * 1024 * 1024
 
@@ -42,11 +47,7 @@ class SftpToS3Config:
                     ],
                 )
             ),
-            s3_landing_bucket_url=get_provider_setting(
-                provider,
-                ("s3", "landing", "bucket_url"),
-                required=True,
-            ),
+            s3_landing_bucket_url=get_provider_s3_landing_bucket_url(provider),
             s3_landing_prefix=(
                 get_provider_setting(
                     provider,
@@ -223,11 +224,7 @@ def plan_landed_files_archive(provider: str) -> list[ArchivePlanItem]:
     """List landed B2/S3 files and their Archive target paths."""
     from dlt_pipelines.sources.s3 import _routes_for_provider
 
-    bucket_url = get_provider_setting(
-        provider,
-        ("s3", "landing", "bucket_url"),
-        required=True,
-    )
+    bucket_url = get_provider_s3_landing_bucket_url(provider)
     fs, bucket_root = fsspec.core.url_to_fs(bucket_url, **_s3_options_from_env())
     bucket_root = bucket_root.rstrip("/")
     plan: list[ArchivePlanItem] = []
@@ -245,11 +242,7 @@ def plan_landed_files_archive(provider: str) -> list[ArchivePlanItem]:
 
 def archive_landed_files(provider: str, *, progress: ProgressCallback | None = None) -> list[ArchivePlanItem]:
     """Move landed B2/S3 files into Archive subdirectories after database load."""
-    bucket_url = get_provider_setting(
-        provider,
-        ("s3", "landing", "bucket_url"),
-        required=True,
-    )
+    bucket_url = get_provider_s3_landing_bucket_url(provider)
     _report(progress, "Connecting to S3-compatible target for archiving.")
     fs, _ = fsspec.core.url_to_fs(bucket_url, **_s3_options_from_env())
     plan = plan_landed_files_archive(provider)
