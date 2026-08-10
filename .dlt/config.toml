@@ -15,6 +15,13 @@ parser = "csv"
 table_name = "ahl_fym_policy"
 parser_options = { dtype = "string", keep_default_na = false }
 
+[[sftp_providers.manhattan.routes]]
+name = "policy"
+file_glob = "manhattan/inbound/*.csv"
+parser = "csv"
+table_name = "manhattan_policy"
+parser_options = { dtype = "string", keep_default_na = false }
+
 [[sftp_providers.unl.routes]]
 name = "fym_policy"
 file_glob = "unl/inbound/FYM_Policy_*.csv"

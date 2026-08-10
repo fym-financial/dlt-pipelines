@@ -204,6 +204,24 @@ is used only as a fallback. `at_risk_policy` is currently always false. Roster
 hierarchy enrichment is intentionally left as a TODO until the AHL hierarchy
 mapping is defined.
 
+## Manhattan S3 Flow
+
+Manhattan is also S3-only and automatically reuses UNL's configured landing
+bucket URL. Every CSV directly under `manhattan/inbound` is treated as a policy
+extract. Run:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline load-s3 manhattan
+```
+
+Rows load into `raw.manhattan_policy`, refresh the separate
+`typed.manhattan_policy` status history and latest-load objects, and then move
+to `manhattan/inbound/Archive`. All source fields, including all four writing
+agent number/name/split groups, are retained. The source object modification
+timestamp supplies `file_date`, with the DLT load timestamp as a fallback.
+`at_risk_policy` is currently always false, and roster hierarchy enrichment is
+intentionally left as a TODO.
+
 For the complete operational command sequence, see
 [`docs/unl-runbook.md`](docs/unl-runbook.md).
 

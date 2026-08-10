@@ -73,8 +73,8 @@ def get_provider_routes(provider: str) -> list[dict[str, Any]]:
 
 
 def get_provider_s3_landing_bucket_url(provider: str) -> str:
-    """Return the provider landing bucket, sharing UNL's bucket with AHL."""
-    bucket_provider = "unl" if provider == "ahl" else provider
+    """Return the landing bucket, sharing UNL's bucket with direct-S3 carriers."""
+    bucket_provider = "unl" if provider in {"ahl", "manhattan"} else provider
     value = get_provider_setting(
         bucket_provider,
         ("s3", "landing", "bucket_url"),

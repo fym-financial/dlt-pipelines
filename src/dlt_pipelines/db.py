@@ -335,6 +335,8 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
         return _refresh_heartland_typed_dataset()
     if provider == "ahl":
         return _refresh_ahl_typed_dataset()
+    if provider == "manhattan":
+        return _refresh_manhattan_typed_dataset()
     if provider != "unl":
         raise RuntimeError(f"Typed refresh is not configured for provider '{provider}'.")
 
@@ -408,6 +410,32 @@ def _refresh_ahl_typed_dataset() -> TypedRefreshResult:
         provider="ahl",
         schema_name="typed",
         table_name="ahl_fym_policy",
+        row_count=row_count,
+    )
+
+
+def _refresh_manhattan_typed_dataset() -> TypedRefreshResult:
+    """Append Manhattan policy rows and rebuild its derived typed objects."""
+    from dlt_pipelines.pipelines.manhattan import manhattan_typed_refresh_statements
+
+    connection = _connect()
+    try:
+        with connection.cursor() as cursor:
+            for statement in manhattan_typed_refresh_statements():
+                cursor.execute(statement)
+            cursor.execute("SELECT count(*) FROM typed.manhattan_policy")
+            row_count = int(cursor.fetchone()[0])
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    return TypedRefreshResult(
+        provider="manhattan",
+        schema_name="typed",
+        table_name="manhattan_policy",
         row_count=row_count,
     )
 

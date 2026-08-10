@@ -37,6 +37,29 @@ def test_refresh_typed_command_supports_ahl(monkeypatch, capsys) -> None:
     assert "Refreshed typed.ahl_fym_policy for provider ahl with 1921 row(s)." in captured.out
 
 
+def test_refresh_typed_command_supports_manhattan(monkeypatch, capsys) -> None:
+    class Result:
+        provider = "manhattan"
+        schema_name = "typed"
+        table_name = "manhattan_policy"
+        row_count = 318
+
+    monkeypatch.setattr(cli, "refresh_typed_dataset", lambda provider: Result())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dlt-pipeline", "refresh-typed", "manhattan"],
+    )
+
+    cli.main()
+
+    captured = capsys.readouterr()
+    assert (
+        "Refreshed typed.manhattan_policy for provider manhattan with 318 row(s)."
+        in captured.out
+    )
+
+
 def test_load_heartland_loads_raw_and_refreshes_typed(monkeypatch, capsys) -> None:
     calls = {}
 

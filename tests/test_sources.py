@@ -26,6 +26,11 @@ from dlt_pipelines.pipelines.ahl import (
     ahl_fym_policy_typed_select,
     ahl_typed_refresh_statements,
 )
+from dlt_pipelines.pipelines.manhattan import (
+    MANHATTAN_TYPED_POLICY_COLUMNS,
+    manhattan_policy_typed_select,
+    manhattan_typed_refresh_statements,
+)
 from dlt_pipelines.transfers import (
     ArchivePlanItem,
     SftpToS3Config,
@@ -377,6 +382,51 @@ def test_ahl_route_accepts_csv_files_directly_under_inbound() -> None:
     ]
 
 
+def test_manhattan_route_accepts_every_csv_directly_under_inbound() -> None:
+    assert _routes_for_provider("manhattan") == [
+        FileRoute(
+            name="policy",
+            file_glob="manhattan/inbound/*.csv",
+            parser="csv",
+            table_name="manhattan_policy",
+            parser_options={"dtype": "string", "keep_default_na": False},
+        )
+    ]
+
+
+def test_manhattan_typed_select_retains_fields_and_defers_tbd_rules() -> None:
+    select_sql = manhattan_policy_typed_select()
+    refresh_sql = "\n".join(manhattan_typed_refresh_statements())
+
+    assert len(MANHATTAN_TYPED_POLICY_COLUMNS) == 40
+    for column in (
+        "company",
+        "plan_desc",
+        "modal_premium",
+        "writing_agent_1_number",
+        "writing_agent_4_split",
+        "owner_phone",
+        "owner_email",
+        "insured_zip",
+    ):
+        assert column in MANHATTAN_TYPED_POLICY_COLUMNS
+    assert "FROM raw.manhattan_policy AS p" in select_sql
+    assert "p.wrtng_agt_1_nox::text" in select_sql
+    assert "p.owner_phonex::text" in select_sql
+    assert "to_date(app_rcvd_text, 'MM/DD/YYYY')" in select_sql
+    assert "modal_premium_text::numeric" in select_sql
+    assert "false AS at_risk_policy" in select_sql
+    assert "ALTER TABLE raw.manhattan_policy ADD COLUMN IF NOT EXISTS wrtng_agt_4_name text" in refresh_sql
+    assert "CREATE OR REPLACE VIEW raw.manhattan_policy_latest_load" in refresh_sql
+    assert "CREATE OR REPLACE VIEW typed.manhattan_policy_latest_load" in refresh_sql
+    assert "typed.manhattan_policy_status_history" in refresh_sql
+    assert "previous_status" in refresh_sql
+    assert "NULL::jsonb AS roster_hierarchy_json" in refresh_sql
+    assert "TODO: add Manhattan roster hierarchy enrichment" in refresh_sql
+    assert "TRUNCATE TABLE typed.manhattan_policy_at_risk_episodes" in refresh_sql
+    assert "ON CONFLICT (_dlt_id) DO NOTHING" in refresh_sql
+
+
 def test_ahl_typed_select_retains_source_fields_and_defers_tbd_rules() -> None:
     select_sql = ahl_fym_policy_typed_select()
     refresh_sql = "\n".join(ahl_typed_refresh_statements())
@@ -470,6 +520,48 @@ def test_refresh_typed_dataset_supports_ahl_without_roster_refresh(monkeypatch) 
     assert result.provider == "ahl"
     assert result.table_name == "ahl_fym_policy"
     assert result.row_count == 1921
+    assert "raw_roster" not in executed_sql
+    assert calls["committed"] is True
+    assert calls["closed"] is True
+
+
+def test_refresh_typed_dataset_supports_manhattan_without_roster_refresh(monkeypatch) -> None:
+    calls: dict[str, object] = {"statements": []}
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, statement: str) -> None:
+            calls["statements"].append(statement)
+
+        def fetchone(self) -> tuple[int]:
+            return (318,)
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            calls["committed"] = True
+
+        def rollback(self) -> None:
+            calls["rolled_back"] = True
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+
+    result = refresh_typed_dataset("manhattan")
+
+    executed_sql = "\n".join(calls["statements"])
+    assert result.provider == "manhattan"
+    assert result.table_name == "manhattan_policy"
+    assert result.row_count == 318
     assert "raw_roster" not in executed_sql
     assert calls["committed"] is True
     assert calls["closed"] is True
@@ -1385,6 +1477,39 @@ def test_ahl_archive_plan_only_matches_direct_inbound_csv_files(monkeypatch) -> 
             source_path="landing-bucket/ahl/inbound/FYM Policy Data 8_6_26.csv",
             archive_path=(
                 "landing-bucket/ahl/inbound/Archive/FYM Policy Data 8_6_26.csv"
+            ),
+        )
+    ]
+
+
+def test_manhattan_archive_plan_uses_unl_bucket_and_inbound_directory(monkeypatch) -> None:
+    class FakeS3Fs:
+        def glob(self, pattern: str) -> list[str]:
+            assert pattern == "landing-bucket/manhattan/inbound/*.csv"
+            return [
+                "landing-bucket/manhattan/inbound/01H70010000PolicyExtract.csv"
+            ]
+
+        def isdir(self, path: str) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        "dlt_pipelines.transfers.fsspec.core.url_to_fs",
+        lambda url, **kwargs: (FakeS3Fs(), "landing-bucket"),
+    )
+    monkeypatch.setenv(
+        "SFTP_PROVIDERS__UNL__S3__LANDING__BUCKET_URL",
+        "s3://landing-bucket",
+    )
+
+    assert plan_landed_files_archive("manhattan") == [
+        ArchivePlanItem(
+            source_path=(
+                "landing-bucket/manhattan/inbound/01H70010000PolicyExtract.csv"
+            ),
+            archive_path=(
+                "landing-bucket/manhattan/inbound/Archive/"
+                "01H70010000PolicyExtract.csv"
             ),
         )
     ]
