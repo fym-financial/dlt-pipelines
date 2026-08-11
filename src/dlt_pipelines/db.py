@@ -334,6 +334,8 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
         return _refresh_heartland_typed_dataset()
     if provider == "ahl":
         return _refresh_ahl_typed_dataset()
+    if provider == "gtl":
+        return _refresh_gtl_typed_dataset()
     if provider == "manhattan":
         return _refresh_manhattan_typed_dataset()
     if provider != "unl":
@@ -370,12 +372,6 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
             _refresh_roster_snapshots(connection)
             for statement in _typed_refresh_statements():
                 cursor.execute(statement)
-            cursor.execute("SELECT to_regclass('raw.gtl_fym_policy') IS NOT NULL")
-            if cursor.fetchone()[0]:
-                from dlt_pipelines.pipelines.gtl import gtl_typed_refresh_statements
-
-                for statement in gtl_typed_refresh_statements():
-                    cursor.execute(statement)
             cursor.execute("SELECT count(*) FROM typed.unl_fym_policy")
             row_count = int(cursor.fetchone()[0])
         connection.commit()
@@ -389,6 +385,33 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
         provider=provider,
         schema_name="typed",
         table_name="unl_fym_policy",
+        row_count=row_count,
+    )
+
+
+def _refresh_gtl_typed_dataset() -> TypedRefreshResult:
+    """Append GTL policy rows and rebuild its carrier-specific typed objects."""
+    from dlt_pipelines.pipelines.gtl import gtl_typed_refresh_statements
+
+    connection = _connect()
+    try:
+        with connection.cursor() as cursor:
+            _refresh_roster_snapshots(connection)
+            for statement in gtl_typed_refresh_statements():
+                cursor.execute(statement)
+            cursor.execute("SELECT count(*) FROM typed.gtl_fym_policy")
+            row_count = int(cursor.fetchone()[0])
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    return TypedRefreshResult(
+        provider="gtl",
+        schema_name="typed",
+        table_name="gtl_fym_policy",
         row_count=row_count,
     )
 

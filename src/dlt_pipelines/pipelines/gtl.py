@@ -121,6 +121,7 @@ def _gtl_roster_hierarchy_select() -> str:
     return (
         _unl_fym_policy_roster_hierarchy_select()
         .replace("typed.unl_fym_policy", "typed.gtl_fym_policy")
+        .replace("fl.provider = 'unl'", "fl.provider = 'gtl'")
         .replace(
             "AND (fl.file_name LIKE 'UNLFYM_Policy_%.csv'\n"
             "           OR fl.file_name LIKE 'FYM_Policy_%.csv')",
@@ -136,7 +137,7 @@ def _gtl_latest_load_view_statement(schema_name: str) -> str:
 WITH latest_file AS (
     SELECT file_name
     FROM audit.file_landings
-    WHERE provider = 'unl'
+    WHERE provider = 'gtl'
       AND status = 'loaded_to_postgres'
       AND file_name LIKE 'GTLFYM_Policy_%.csv'
     ORDER BY landed_at DESC, file_name DESC

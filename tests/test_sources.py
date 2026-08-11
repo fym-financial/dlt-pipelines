@@ -15,6 +15,7 @@ from dlt_pipelines.db import (
     record_file_events,
     refresh_typed_dataset,
 )
+from dlt_pipelines.config import get_provider_s3_landing_bucket_url
 from dlt_pipelines.sources import api
 from dlt_pipelines.sources.api import HEARTLAND_POLICY_FIELDS, heartland_inforced_policies
 from dlt_pipelines.sources.files import csv_customers
@@ -338,13 +339,6 @@ def test_unl_routes_are_configured() -> None:
             },
         ),
         FileRoute(
-            name="gtl_fym_policy",
-            file_glob="unl/inbound/GTLFYM_Policy_*.csv",
-            parser="csv",
-            table_name="gtl_fym_policy",
-            parser_options={"dtype": "string", "keep_default_na": False},
-        ),
-        FileRoute(
             name="life_professionals_policy",
             file_glob="unl/inbound/LifeProfessionals_Policy_*.csv",
             parser="csv",
@@ -380,6 +374,27 @@ def test_unl_routes_are_configured() -> None:
             parser_options={},
         ),
     ]
+
+
+def test_gtl_route_uses_its_own_provider_over_the_shared_unl_prefix() -> None:
+    assert _routes_for_provider("gtl") == [
+        FileRoute(
+            name="fym_policy",
+            file_glob="unl/inbound/GTLFYM_Policy_*.csv",
+            parser="csv",
+            table_name="gtl_fym_policy",
+            parser_options={"dtype": "string", "keep_default_na": False},
+        )
+    ]
+
+
+def test_gtl_uses_unl_landing_bucket(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "SFTP_PROVIDERS__UNL__S3__LANDING__BUCKET_URL",
+        "s3://shared-carrier-bucket",
+    )
+
+    assert get_provider_s3_landing_bucket_url("gtl") == "s3://shared-carrier-bucket"
 
 
 def test_ahl_route_accepts_csv_files_directly_under_inbound() -> None:
@@ -422,6 +437,7 @@ def test_gtl_typed_pipeline_matches_unl_policy_workflow() -> None:
     assert "CREATE OR REPLACE VIEW raw.gtl_fym_policy_latest_load" in refresh_sql
     assert "CREATE OR REPLACE VIEW typed.gtl_fym_policy_latest_load" in refresh_sql
     assert "file_name LIKE 'GTLFYM_Policy_%.csv'" in refresh_sql
+    assert "provider = 'gtl'" in refresh_sql
     assert "policy_roster_hierarchy.roster_hierarchy_json" in refresh_sql
     assert "'gtl'::text AS carrier" in refresh_sql
     assert "ON CONFLICT (_dlt_id) DO NOTHING" in refresh_sql
@@ -570,6 +586,53 @@ def test_refresh_typed_dataset_supports_ahl_without_roster_refresh(monkeypatch) 
     assert calls["closed"] is True
 
 
+def test_refresh_typed_dataset_supports_gtl_with_roster_refresh(monkeypatch) -> None:
+    calls: dict[str, object] = {"statements": []}
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, statement: str) -> None:
+            calls["statements"].append(statement)
+
+        def fetchone(self) -> tuple[int]:
+            return (731,)
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            calls["committed"] = True
+
+        def rollback(self) -> None:
+            calls["rolled_back"] = True
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+    monkeypatch.setattr(
+        "dlt_pipelines.db._refresh_roster_snapshots",
+        lambda connection: calls.update(roster_refreshed=True),
+    )
+
+    result = refresh_typed_dataset("gtl")
+
+    executed_sql = "\n".join(calls["statements"])
+    assert result.provider == "gtl"
+    assert result.table_name == "gtl_fym_policy"
+    assert result.row_count == 731
+    assert "CREATE TABLE IF NOT EXISTS typed.gtl_fym_policy" in executed_sql
+    assert calls["roster_refreshed"] is True
+    assert calls["committed"] is True
+    assert calls["closed"] is True
+
+
 def test_refresh_typed_dataset_supports_manhattan_without_roster_refresh(monkeypatch) -> None:
     calls: dict[str, object] = {"statements": []}
 
@@ -617,8 +680,6 @@ def test_routes_with_matches_skips_empty_patterns(monkeypatch) -> None:
         def glob(self, pattern: str) -> list[str]:
             if pattern == "landing-bucket/unl/inbound/UNLFYM_Policy_*.csv":
                 return ["landing-bucket/unl/inbound/UNLFYM_Policy_20260811100021.csv"]
-            if pattern == "landing-bucket/unl/inbound/GTLFYM_Policy_*.csv":
-                return ["landing-bucket/unl/inbound/GTLFYM_Policy_20260810013637.csv"]
             return []
 
         def isdir(self, path: str) -> bool:
@@ -647,13 +708,6 @@ def test_routes_with_matches_skips_empty_patterns(monkeypatch) -> None:
                     "billing_mode": "string",
                 }
             },
-        ),
-        FileRoute(
-            name="gtl_fym_policy",
-            file_glob="unl/inbound/GTLFYM_Policy_*.csv",
-            parser="csv",
-            table_name="gtl_fym_policy",
-            parser_options={"dtype": "string", "keep_default_na": False},
         ),
     ]
 
@@ -1067,8 +1121,6 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
                 return (True, True)
             if "max(coalesce(raw_dlt_load_id" in self.query:
                 return ("1783955745.5023258",)
-            if "to_regclass('raw.gtl_fym_policy')" in self.query:
-                return (True,)
             return (42,)
 
     class FakeConnection:
@@ -1214,14 +1266,6 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     )
     assert any(
         query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements")
-        for query in executed_sql
-    )
-    assert any(
-        query.startswith("CREATE TABLE IF NOT EXISTS typed.gtl_fym_policy")
-        for query in executed_sql
-    )
-    assert any(
-        query.startswith("CREATE OR REPLACE VIEW typed.gtl_fym_policy_latest_load")
         for query in executed_sql
     )
     assert any(
@@ -1461,8 +1505,6 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
         def glob(self, pattern: str) -> list[str]:
             if pattern == "landing-bucket/unl/inbound/UNLFYM_Policy_*.csv":
                 return ["landing-bucket/unl/inbound/UNLFYM_Policy_20260811100021.csv"]
-            if pattern == "landing-bucket/unl/inbound/GTLFYM_Policy_*.csv":
-                return ["landing-bucket/unl/inbound/GTLFYM_Policy_20260810013637.csv"]
             if pattern == "landing-bucket/unl/inbound/CommissionStatements/WC_*.csv":
                 return [
                     "landing-bucket/unl/inbound/CommissionStatements/"
@@ -1501,10 +1543,6 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
         ArchivePlanItem(
             source_path="landing-bucket/unl/inbound/UNLFYM_Policy_20260811100021.csv",
             archive_path="landing-bucket/unl/inbound/Archive/UNLFYM_Policy_20260811100021.csv",
-        ),
-        ArchivePlanItem(
-            source_path="landing-bucket/unl/inbound/GTLFYM_Policy_20260810013637.csv",
-            archive_path="landing-bucket/unl/inbound/Archive/GTLFYM_Policy_20260810013637.csv",
         ),
         ArchivePlanItem(
             source_path=(
