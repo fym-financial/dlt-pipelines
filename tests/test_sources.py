@@ -1267,6 +1267,11 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         and "unl_fym_policy_latest_load" in query
     }
     assert sorted(latest_load_sql_by_schema) == ["raw", "typed"]
+    raw_policy_drop_position = executed_sql.index(
+        "DROP VIEW IF EXISTS raw.unl_fym_policy_latest_load"
+    )
+    raw_policy_create_position = executed_sql.index(latest_load_sql_by_schema["raw"])
+    assert raw_policy_drop_position < raw_policy_create_position
     for schema_name, latest_load_sql in latest_load_sql_by_schema.items():
         assert f"CREATE OR REPLACE VIEW {schema_name}.unl_fym_policy_latest_load" in latest_load_sql
         assert f"FROM {schema_name}.unl_fym_policy AS p" in latest_load_sql
@@ -1296,6 +1301,13 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         and "unl_weekly_advance_statements_latest_load" in query
     }
     assert sorted(weekly_advance_latest_load_sql_by_schema) == ["raw", "typed"]
+    raw_advance_drop_position = executed_sql.index(
+        "DROP VIEW IF EXISTS raw.unl_weekly_advance_statements_latest_load"
+    )
+    raw_advance_create_position = executed_sql.index(
+        weekly_advance_latest_load_sql_by_schema["raw"]
+    )
+    assert raw_advance_drop_position < raw_advance_create_position
     for schema_name, latest_load_sql in weekly_advance_latest_load_sql_by_schema.items():
         assert (
             f"CREATE OR REPLACE VIEW {schema_name}.unl_weekly_advance_statements_latest_load"

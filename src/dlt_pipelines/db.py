@@ -832,8 +832,12 @@ def _typed_schema_and_view_statements() -> tuple[str, ...]:
             "CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements AS "
             f"{weekly_advance_typed_select} WITH NO DATA"
         ),
+        # Raw latest-load views select p.*. Recreate them so newly discovered
+        # raw columns do not look like renames of the appended enrichment columns.
+        "DROP VIEW IF EXISTS raw.unl_fym_policy_latest_load",
         _unl_fym_policy_latest_load_view_statement("raw"),
         _unl_fym_policy_latest_load_view_statement("typed"),
+        "DROP VIEW IF EXISTS raw.unl_weekly_advance_statements_latest_load",
         _unl_weekly_advance_latest_load_view_statement("raw"),
         _unl_weekly_advance_latest_load_view_statement("typed"),
     )
