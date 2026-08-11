@@ -277,7 +277,7 @@ def check_unl_fym_policy_loaded(
     max_age: timedelta,
     current_time: datetime | None = None,
 ) -> ExpectedFileCheckResult:
-    file_pattern = r"FYM\_Policy\_%.csv"
+    file_pattern = r"^(UNL)?FYM_Policy_[0-9]{14}\.csv$"
     checked_at = current_time or datetime.now(timezone.utc)
     if checked_at.tzinfo is None:
         checked_at = checked_at.replace(tzinfo=timezone.utc)
@@ -291,8 +291,7 @@ def check_unl_fym_policy_loaded(
                 FROM audit.file_landings
                 WHERE provider = 'unl'
                   AND status = 'loaded_to_postgres'
-                  AND file_name LIKE %s
-                  ESCAPE '\\'
+                  AND file_name ~ %s
                 ORDER BY landed_at DESC, file_name DESC
                 LIMIT 1
                 """,
@@ -371,6 +370,12 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
             _refresh_roster_snapshots(connection)
             for statement in _typed_refresh_statements():
                 cursor.execute(statement)
+            cursor.execute("SELECT to_regclass('raw.gtl_fym_policy') IS NOT NULL")
+            if cursor.fetchone()[0]:
+                from dlt_pipelines.pipelines.gtl import gtl_typed_refresh_statements
+
+                for statement in gtl_typed_refresh_statements():
+                    cursor.execute(statement)
             cursor.execute("SELECT count(*) FROM typed.unl_fym_policy")
             row_count = int(cursor.fetchone()[0])
         connection.commit()
@@ -950,7 +955,8 @@ def _unl_fym_policy_roster_hierarchy_select() -> str:
     FROM audit.file_landings AS fl
     WHERE fl.provider = 'unl'
       AND fl.status = 'loaded_to_postgres'
-      AND fl.file_name LIKE 'FYM_Policy_%.csv'
+      AND (fl.file_name LIKE 'UNLFYM_Policy_%.csv'
+           OR fl.file_name LIKE 'FYM_Policy_%.csv')
     ORDER BY fl.landed_at DESC, fl.file_name DESC
     LIMIT 1
 ),
@@ -1118,7 +1124,8 @@ WITH latest_file AS (
     FROM audit.file_landings AS fl
     WHERE fl.provider = 'unl'
       AND fl.status = 'loaded_to_postgres'
-      AND fl.file_name LIKE 'FYM_Policy_%.csv'
+      AND (fl.file_name LIKE 'UNLFYM_Policy_%.csv'
+           OR fl.file_name LIKE 'FYM_Policy_%.csv')
     ORDER BY fl.landed_at DESC, fl.file_name DESC
     LIMIT 1
 ),
@@ -1204,7 +1211,7 @@ WITH base AS (
         nullif(split_part(p.cntrct_date::text, '.', 1), '') AS cntrct_date_text,
         nullif(split_part(p.term_date::text, '.', 1), '') AS term_date_text,
         nullif(p.billing_mode::text, '') AS billing_mode_text,
-        substring(p._source_file from 'FYM_Policy_(\\d{8})') AS file_date_text
+        substring(split_part(p._source_file, '_Policy_', 2) from 1 for 8) AS file_date_text
     FROM raw.unl_fym_policy AS p
 ),
 typed_rows AS (

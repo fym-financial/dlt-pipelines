@@ -171,6 +171,14 @@ precomputes the latest policy roster JSON in
 indexed join to that table instead of rebuilding the recursive hierarchy on
 every query.
 
+The UNL S3 load also routes `GTLFYM_Policy_<timestamp>.csv` into the separate
+`raw.gtl_fym_policy` table. When that table exists, the normal `refresh-typed
+unl` step appends rows to `typed.gtl_fym_policy` and rebuilds GTL's change
+history, roster hierarchy, at-risk episodes, and raw/typed latest-load views.
+GTL remains separate from UNL so each carrier selects its own latest file. The current GTL extract
+omits a few nullable UNL fields; the refresh adds those compatibility columns
+as nulls while retaining every supplied field in raw storage.
+
 The FYM policy typed history and both FYM policy latest-load views include:
 
 - `previous_contract_code` and `contract_code_last_change_date`
@@ -302,9 +310,15 @@ parallelism_strategy = "sequential"
 
 [[sftp_providers.unl.routes]]
 name = "fym_policy"
-file_glob = "unl/inbound/FYM_Policy_*.csv"
+file_glob = "unl/inbound/UNLFYM_Policy_*.csv"
 parser = "csv"
 table_name = "unl_fym_policy"
+
+[[sftp_providers.unl.routes]]
+name = "gtl_fym_policy"
+file_glob = "unl/inbound/GTLFYM_Policy_*.csv"
+parser = "csv"
+table_name = "gtl_fym_policy"
 
 [[sftp_providers.unl.routes]]
 name = "life_professionals_policy"

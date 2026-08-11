@@ -24,10 +24,17 @@ parser_options = { dtype = "string", keep_default_na = false }
 
 [[sftp_providers.unl.routes]]
 name = "fym_policy"
-file_glob = "unl/inbound/FYM_Policy_*.csv"
+file_glob = "unl/inbound/UNLFYM_Policy_*.csv"
 parser = "csv"
 table_name = "unl_fym_policy"
 parser_options = { dtype = { zip = "string", issue_date = "string", app_recvd_date = "string", paid_to_date = "string", billing_mode = "string" } }
+
+[[sftp_providers.unl.routes]]
+name = "gtl_fym_policy"
+file_glob = "unl/inbound/GTLFYM_Policy_*.csv"
+parser = "csv"
+table_name = "gtl_fym_policy"
+parser_options = { dtype = "string", keep_default_na = false }
 
 [[sftp_providers.unl.routes]]
 name = "life_professionals_policy"

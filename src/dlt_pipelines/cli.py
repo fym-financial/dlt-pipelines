@@ -310,7 +310,7 @@ def main() -> None:
             raise SystemExit(2)
         print(
             "Missing loaded UNL FYM policy file: expected latest audit row with "
-            f"file_name LIKE {result.file_pattern} and status loaded_to_postgres."
+            f"file_name matching {result.file_pattern} and status loaded_to_postgres."
         )
         raise SystemExit(2)
 

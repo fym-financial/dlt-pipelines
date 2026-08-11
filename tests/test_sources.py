@@ -31,6 +31,11 @@ from dlt_pipelines.pipelines.manhattan import (
     manhattan_policy_typed_select,
     manhattan_typed_refresh_statements,
 )
+from dlt_pipelines.pipelines.gtl import (
+    GTL_TYPED_POLICY_COLUMNS,
+    gtl_fym_policy_typed_select,
+    gtl_typed_refresh_statements,
+)
 from dlt_pipelines.transfers import (
     ArchivePlanItem,
     SftpToS3Config,
@@ -319,7 +324,7 @@ def test_unl_routes_are_configured() -> None:
     assert routes == [
         FileRoute(
             name="fym_policy",
-            file_glob="unl/inbound/FYM_Policy_*.csv",
+            file_glob="unl/inbound/UNLFYM_Policy_*.csv",
             parser="csv",
             table_name="unl_fym_policy",
             parser_options={
@@ -331,6 +336,13 @@ def test_unl_routes_are_configured() -> None:
                     "billing_mode": "string",
                 }
             },
+        ),
+        FileRoute(
+            name="gtl_fym_policy",
+            file_glob="unl/inbound/GTLFYM_Policy_*.csv",
+            parser="csv",
+            table_name="gtl_fym_policy",
+            parser_options={"dtype": "string", "keep_default_na": False},
         ),
         FileRoute(
             name="life_professionals_policy",
@@ -380,6 +392,39 @@ def test_ahl_route_accepts_csv_files_directly_under_inbound() -> None:
             parser_options={"dtype": "string", "keep_default_na": False},
         )
     ]
+
+
+def test_gtl_typed_pipeline_matches_unl_policy_workflow() -> None:
+    select_sql = gtl_fym_policy_typed_select()
+    refresh_sql = "\n".join(gtl_typed_refresh_statements())
+
+    assert len(GTL_TYPED_POLICY_COLUMNS) == 41
+    assert "FROM raw.gtl_fym_policy AS p" in select_sql
+    assert "split_part(p._source_file, '_Policy_', 2)" in select_sql
+    assert "AS at_risk_policy" in select_sql
+    for missing_sample_column in (
+        "ga",
+        "ga_name",
+        "agent_ga_level_01",
+        "cntrct_date",
+        "billing_form",
+        "term_date",
+    ):
+        assert (
+            "ALTER TABLE raw.gtl_fym_policy ADD COLUMN IF NOT EXISTS "
+            f"{missing_sample_column} text"
+        ) in refresh_sql
+    assert "CREATE TABLE IF NOT EXISTS typed.gtl_fym_policy" in refresh_sql
+    assert "typed.gtl_fym_policy_change_history" in refresh_sql
+    assert "typed.gtl_fym_policy_roster_hierarchy" in refresh_sql
+    assert "carrier.name ILIKE '%gtl%'" in refresh_sql
+    assert "typed.gtl_fym_policy_at_risk_episodes" in refresh_sql
+    assert "CREATE OR REPLACE VIEW raw.gtl_fym_policy_latest_load" in refresh_sql
+    assert "CREATE OR REPLACE VIEW typed.gtl_fym_policy_latest_load" in refresh_sql
+    assert "file_name LIKE 'GTLFYM_Policy_%.csv'" in refresh_sql
+    assert "policy_roster_hierarchy.roster_hierarchy_json" in refresh_sql
+    assert "'gtl'::text AS carrier" in refresh_sql
+    assert "ON CONFLICT (_dlt_id) DO NOTHING" in refresh_sql
 
 
 def test_manhattan_route_accepts_every_csv_directly_under_inbound() -> None:
@@ -570,8 +615,10 @@ def test_refresh_typed_dataset_supports_manhattan_without_roster_refresh(monkeyp
 def test_routes_with_matches_skips_empty_patterns(monkeypatch) -> None:
     class FakeS3Fs:
         def glob(self, pattern: str) -> list[str]:
-            if pattern == "landing-bucket/unl/inbound/FYM_Policy_*.csv":
-                return ["landing-bucket/unl/inbound/FYM_Policy_20260528100022.csv"]
+            if pattern == "landing-bucket/unl/inbound/UNLFYM_Policy_*.csv":
+                return ["landing-bucket/unl/inbound/UNLFYM_Policy_20260811100021.csv"]
+            if pattern == "landing-bucket/unl/inbound/GTLFYM_Policy_*.csv":
+                return ["landing-bucket/unl/inbound/GTLFYM_Policy_20260810013637.csv"]
             return []
 
         def isdir(self, path: str) -> bool:
@@ -588,7 +635,7 @@ def test_routes_with_matches_skips_empty_patterns(monkeypatch) -> None:
     assert routes == [
         FileRoute(
             name="fym_policy",
-            file_glob="unl/inbound/FYM_Policy_*.csv",
+            file_glob="unl/inbound/UNLFYM_Policy_*.csv",
             parser="csv",
             table_name="unl_fym_policy",
             parser_options={
@@ -600,7 +647,14 @@ def test_routes_with_matches_skips_empty_patterns(monkeypatch) -> None:
                     "billing_mode": "string",
                 }
             },
-        )
+        ),
+        FileRoute(
+            name="gtl_fym_policy",
+            file_glob="unl/inbound/GTLFYM_Policy_*.csv",
+            parser="csv",
+            table_name="gtl_fym_policy",
+            parser_options={"dtype": "string", "keep_default_na": False},
+        ),
     ]
 
 
@@ -911,9 +965,9 @@ def test_check_unl_fym_policy_loaded_uses_latest_loaded_fym_policy(monkeypatch) 
     )
 
     assert "status = 'loaded_to_postgres'" in calls["query"]
-    assert "ESCAPE" in calls["query"]
+    assert "file_name ~ %s" in calls["query"]
     assert "ORDER BY landed_at DESC, file_name DESC" in calls["query"]
-    assert calls["params"] == (r"FYM\_Policy\_%.csv",)
+    assert calls["params"] == (r"^(UNL)?FYM_Policy_[0-9]{14}\.csv$",)
     assert calls["closed"] is True
     assert result.found is True
     assert result.is_recent is True
@@ -951,7 +1005,7 @@ def test_check_unl_fym_policy_loaded_reports_missing(monkeypatch) -> None:
 
     assert result.found is False
     assert result.is_recent is False
-    assert result.file_pattern == r"FYM\_Policy\_%.csv"
+    assert result.file_pattern == r"^(UNL)?FYM_Policy_[0-9]{14}\.csv$"
 
 
 def test_check_unl_fym_policy_loaded_reports_stale(monkeypatch) -> None:
@@ -1013,6 +1067,8 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
                 return (True, True)
             if "max(coalesce(raw_dlt_load_id" in self.query:
                 return ("1783955745.5023258",)
+            if "to_regclass('raw.gtl_fym_policy')" in self.query:
+                return (True,)
             return (42,)
 
     class FakeConnection:
@@ -1071,6 +1127,7 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
         index
         for index, query in enumerate(executed_sql)
         if query.startswith("CREATE OR REPLACE VIEW ")
+        and ".unl_" in query
     ]
     assert latest_view_positions
     assert max(latest_view_positions) < schema_commit_position <= first_truncate_position
@@ -1157,6 +1214,14 @@ def test_refresh_typed_dataset_executes_refresh_sql(monkeypatch) -> None:
     )
     assert any(
         query.startswith("CREATE TABLE IF NOT EXISTS typed.unl_weekly_advance_statements")
+        for query in executed_sql
+    )
+    assert any(
+        query.startswith("CREATE TABLE IF NOT EXISTS typed.gtl_fym_policy")
+        for query in executed_sql
+    )
+    assert any(
+        query.startswith("CREATE OR REPLACE VIEW typed.gtl_fym_policy_latest_load")
         for query in executed_sql
     )
     assert any(
@@ -1382,8 +1447,10 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
 
     class FakeS3Fs:
         def glob(self, pattern: str) -> list[str]:
-            if pattern == "landing-bucket/unl/inbound/FYM_Policy_*.csv":
-                return ["landing-bucket/unl/inbound/FYM_Policy_20260528100022.csv"]
+            if pattern == "landing-bucket/unl/inbound/UNLFYM_Policy_*.csv":
+                return ["landing-bucket/unl/inbound/UNLFYM_Policy_20260811100021.csv"]
+            if pattern == "landing-bucket/unl/inbound/GTLFYM_Policy_*.csv":
+                return ["landing-bucket/unl/inbound/GTLFYM_Policy_20260810013637.csv"]
             if pattern == "landing-bucket/unl/inbound/CommissionStatements/WC_*.csv":
                 return [
                     "landing-bucket/unl/inbound/CommissionStatements/"
@@ -1420,8 +1487,12 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
 
     assert plan == [
         ArchivePlanItem(
-            source_path="landing-bucket/unl/inbound/FYM_Policy_20260528100022.csv",
-            archive_path="landing-bucket/unl/inbound/Archive/FYM_Policy_20260528100022.csv",
+            source_path="landing-bucket/unl/inbound/UNLFYM_Policy_20260811100021.csv",
+            archive_path="landing-bucket/unl/inbound/Archive/UNLFYM_Policy_20260811100021.csv",
+        ),
+        ArchivePlanItem(
+            source_path="landing-bucket/unl/inbound/GTLFYM_Policy_20260810013637.csv",
+            archive_path="landing-bucket/unl/inbound/Archive/GTLFYM_Policy_20260810013637.csv",
         ),
         ArchivePlanItem(
             source_path=(

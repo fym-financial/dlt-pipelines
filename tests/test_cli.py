@@ -184,7 +184,7 @@ def test_check_fym_policy_load_prints_found_result(monkeypatch, capsys) -> None:
         lambda max_age: ExpectedFileCheckResult(
             provider="unl",
             file_type="fym_policy",
-            file_pattern=r"FYM\_Policy\_%.csv",
+            file_pattern=r"^(UNL)?FYM_Policy_[0-9]{14}\.csv$",
             found=True,
             current_time=datetime(2026, 7, 6, 16, tzinfo=timezone.utc),
             max_age=max_age,
@@ -215,7 +215,7 @@ def test_check_fym_policy_load_exits_nonzero_when_missing(monkeypatch, capsys) -
         lambda max_age: ExpectedFileCheckResult(
             provider="unl",
             file_type="fym_policy",
-            file_pattern=r"FYM\_Policy\_%.csv",
+            file_pattern=r"^(UNL)?FYM_Policy_[0-9]{14}\.csv$",
             found=False,
             current_time=datetime(2026, 7, 6, 16, tzinfo=timezone.utc),
             max_age=max_age,
@@ -236,7 +236,7 @@ def test_check_fym_policy_load_exits_nonzero_when_missing(monkeypatch, capsys) -
 
     captured = capsys.readouterr()
     assert "Missing loaded UNL FYM policy file" in captured.out
-    assert r"FYM\_Policy\_%.csv" in captured.out
+    assert r"^(UNL)?FYM_Policy_[0-9]{14}\.csv$" in captured.out
 
 
 def test_check_fym_policy_load_exits_nonzero_when_stale(monkeypatch, capsys) -> None:
@@ -246,7 +246,7 @@ def test_check_fym_policy_load_exits_nonzero_when_stale(monkeypatch, capsys) -> 
         lambda max_age: ExpectedFileCheckResult(
             provider="unl",
             file_type="fym_policy",
-            file_pattern=r"FYM\_Policy\_%.csv",
+            file_pattern=r"^(UNL)?FYM_Policy_[0-9]{14}\.csv$",
             found=True,
             current_time=datetime(2026, 7, 6, 18, tzinfo=timezone.utc),
             max_age=max_age,
