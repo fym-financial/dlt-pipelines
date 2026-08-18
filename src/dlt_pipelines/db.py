@@ -272,6 +272,48 @@ def record_file_events(events: list[FileAuditEvent]) -> int:
     return len(events)
 
 
+def verify_raw_file_loads(
+    expected_files: list[tuple[str, str]],
+    *,
+    schema_name: str = "raw",
+) -> None:
+    """Require at least one destination row for every landed source file."""
+    if not expected_files:
+        return
+
+    missing: list[tuple[str, str]] = []
+    connection = _connect()
+    try:
+        with connection.cursor() as cursor:
+            for table_name, file_name in dict.fromkeys(expected_files):
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT EXISTS ("
+                        "SELECT 1 FROM {}.{} WHERE _source_file = %s LIMIT 1"
+                        ")"
+                    ).format(
+                        sql.Identifier(schema_name),
+                        sql.Identifier(table_name),
+                    ),
+                    (file_name,),
+                )
+                row = cursor.fetchone()
+                if row is None or not bool(row[0]):
+                    missing.append((table_name, file_name))
+    finally:
+        connection.close()
+
+    if missing:
+        details = ", ".join(
+            f"{schema_name}.{table_name} <- {file_name}"
+            for table_name, file_name in missing
+        )
+        raise RuntimeError(
+            "Raw load verification failed; no destination rows were found for: "
+            f"{details}. Files were not marked loaded or archived."
+        )
+
+
 def check_unl_fym_policy_loaded(
     *,
     max_age: timedelta,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import posixpath
-import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -225,5 +224,4 @@ def _read_csv_with_file_errors(
                     df["_source_modified_at"] = source_modified_at
                     yield df.to_dict(orient="records")
         except Exception as exc:
-            print(f"Skipping CSV file {file_name}: {exc}", file=sys.stderr)
-            continue
+            raise RuntimeError(f"Failed to read CSV file {file_name}: {exc}") from exc

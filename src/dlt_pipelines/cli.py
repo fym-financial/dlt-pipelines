@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import timedelta
+from pathlib import PurePosixPath
 
 from dlt_pipelines.db import (
     FileAuditEvent,
@@ -11,6 +12,7 @@ from dlt_pipelines.db import (
     check_postgres_connection,
     record_file_events,
     refresh_typed_dataset,
+    verify_raw_file_loads,
 )
 from dlt_pipelines.pipelines.load import SOURCE_CHOICES, run_pipeline
 from dlt_pipelines.transfers import (
@@ -232,11 +234,17 @@ def main() -> None:
             pipeline_name=args.pipeline_name,
         )
         print(load_info)
-        _record_loaded_files(args.provider, plan_landed_files_archive(args.provider))
+        archive_plan = plan_landed_files_archive(args.provider)
+        _verify_raw_loads(archive_plan, schema_name=args.dataset)
+        _record_loaded_files(args.provider, archive_plan)
         if not args.no_refresh_typed:
             _refresh_typed_and_print(args.provider)
         if not args.no_archive:
-            archived = archive_landed_files(args.provider, progress=_print_progress)
+            archived = archive_landed_files(
+                args.provider,
+                progress=_print_progress,
+                plan=archive_plan,
+            )
             _record_archived_files(args.provider, archived)
             print(f"Archived {len(archived)} landed file(s).")
         return
@@ -281,10 +289,16 @@ def main() -> None:
             pipeline_name=args.pipeline_name,
         )
         print(load_info)
-        _record_loaded_files(args.provider, plan_landed_files_archive(args.provider))
+        archive_plan = plan_landed_files_archive(args.provider)
+        _verify_raw_loads(archive_plan, schema_name=args.dataset)
+        _record_loaded_files(args.provider, archive_plan)
         if not args.no_refresh_typed:
             _refresh_typed_and_print(args.provider)
-        archived = archive_landed_files(args.provider, progress=_print_progress)
+        archived = archive_landed_files(
+            args.provider,
+            progress=_print_progress,
+            plan=archive_plan,
+        )
         _record_archived_files(args.provider, archived)
         print(f"Archived {len(archived)} landed file(s).")
         return
@@ -404,6 +418,15 @@ def _record_loaded_files(provider: str, archive_plan) -> None:
     ]
     count = record_file_events(events)
     print(f"Recorded {count} loaded file audit event(s).")
+
+
+def _verify_raw_loads(archive_plan, *, schema_name: str) -> None:
+    expected_files = [
+        (item.table_name, PurePosixPath(item.source_path).name)
+        for item in archive_plan
+    ]
+    verify_raw_file_loads(expected_files, schema_name=schema_name)
+    print(f"Verified {len(expected_files)} loaded file(s) in {schema_name}.")
 
 
 def _record_archived_files(provider: str, archived) -> None:

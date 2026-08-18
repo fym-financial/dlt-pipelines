@@ -14,6 +14,7 @@ from dlt_pipelines.db import (
     check_postgres_connection,
     record_file_events,
     refresh_typed_dataset,
+    verify_raw_file_loads,
 )
 from dlt_pipelines.config import get_provider_s3_landing_bucket_url
 from dlt_pipelines.sources import api
@@ -554,6 +555,21 @@ def test_csv_reader_attaches_source_modification_timestamp() -> None:
     ]
 
 
+def test_csv_reader_raises_instead_of_skipping_malformed_file() -> None:
+    class FakeFile(dict):
+        def open(self) -> BytesIO:
+            return BytesIO(b'first,second\n"unterminated,field\n')
+
+    file_item = FakeFile(file_name="broken.csv", modification_date=None)
+
+    try:
+        list(s3._read_csv_with_file_errors(iter([file_item])))
+    except RuntimeError as exc:
+        assert "Failed to read CSV file broken.csv" in str(exc)
+    else:
+        raise AssertionError("Expected malformed CSV input to abort the load")
+
+
 def test_refresh_typed_dataset_supports_ahl_without_roster_refresh(monkeypatch) -> None:
     calls: dict[str, object] = {"statements": []}
 
@@ -991,6 +1007,49 @@ def test_record_file_events_upserts_audit_rows(monkeypatch) -> None:
         "moved_to_landing",
         None,
     )
+
+
+def test_verify_raw_file_loads_rejects_missing_destination_rows(monkeypatch) -> None:
+    calls: dict[str, object] = {"params": []}
+    results = iter([(True,), (False,)])
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, query: object, params: tuple[str]) -> None:
+            calls["params"].append(params)
+
+        def fetchone(self) -> tuple[bool]:
+            return next(results)
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+
+    try:
+        verify_raw_file_loads(
+            [
+                ("gtl_fym_policy", "loaded.csv"),
+                ("gtl_fym_policy", "missing.csv"),
+            ]
+        )
+    except RuntimeError as exc:
+        assert "raw.gtl_fym_policy <- missing.csv" in str(exc)
+        assert "not marked loaded or archived" in str(exc)
+    else:
+        raise AssertionError("Expected missing raw rows to fail verification")
+
+    assert calls["params"] == [("loaded.csv",), ("missing.csv",)]
+    assert calls["closed"] is True
 
 
 def test_check_unl_fym_policy_loaded_uses_latest_loaded_fym_policy(monkeypatch) -> None:
@@ -1553,6 +1612,7 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
         ArchivePlanItem(
             source_path="landing-bucket/unl/inbound/UNLFYM_Policy_20260811100021.csv",
             archive_path="landing-bucket/unl/inbound/Archive/UNLFYM_Policy_20260811100021.csv",
+            table_name="unl_fym_policy",
         ),
         ArchivePlanItem(
             source_path=(
@@ -1563,6 +1623,7 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
                 "landing-bucket/unl/inbound/CommissionStatements/Archive/"
                 "WC_202JVV00_2026_05_27.csv"
             ),
+            table_name="unl_weekly_commissions",
         ),
         ArchivePlanItem(
             source_path=(
@@ -1573,6 +1634,7 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
                 "landing-bucket/unl/inbound/CommissionStatements/Archive/"
                 "WA_202JVV00_2026_05_27.csv"
             ),
+            table_name="unl_weekly_advance_statements",
         ),
     ]
 
@@ -1609,6 +1671,7 @@ def test_ahl_archive_plan_only_matches_direct_inbound_csv_files(monkeypatch) -> 
             archive_path=(
                 "landing-bucket/ahl/inbound/Archive/FYM Policy Data 8_6_26.csv"
             ),
+            table_name="ahl_fym_policy",
         )
     ]
 
@@ -1642,5 +1705,6 @@ def test_manhattan_archive_plan_uses_unl_bucket_and_inbound_directory(monkeypatc
                 "landing-bucket/manhattan/inbound/Archive/"
                 "01H70010000PolicyExtract.csv"
             ),
+            table_name="manhattan_policy",
         )
     ]

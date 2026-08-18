@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from dlt_pipelines import cli
 from dlt_pipelines.db import ExpectedFileCheckResult
+from dlt_pipelines.transfers import ArchivePlanItem
 
 
 def test_refresh_typed_command_prints_result(monkeypatch, capsys) -> None:
@@ -104,7 +105,11 @@ def test_load_s3_refreshes_typed_by_default(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "run_pipeline", lambda **kwargs: "loaded")
     monkeypatch.setattr(cli, "plan_landed_files_archive", lambda provider: [])
     monkeypatch.setattr(cli, "_record_loaded_files", lambda provider, archive_plan: None)
-    monkeypatch.setattr(cli, "archive_landed_files", lambda provider, progress=None: [])
+    monkeypatch.setattr(
+        cli,
+        "archive_landed_files",
+        lambda provider, progress=None, plan=None: [],
+    )
     monkeypatch.setattr(cli, "_record_archived_files", lambda provider, archived: None)
 
     def fake_refresh(provider: str) -> Result:
@@ -150,6 +155,52 @@ def test_load_s3_no_refresh_typed_flag_skips_refresh(monkeypatch, capsys) -> Non
     captured = capsys.readouterr()
     assert calls["refreshed"] is False
     assert "loaded" in captured.out
+
+
+def test_load_s3_does_not_audit_refresh_or_archive_unverified_file(
+    monkeypatch,
+) -> None:
+    archive_plan = [
+        ArchivePlanItem(
+            source_path="landing-bucket/unl/inbound/GTLFYM_Policy_missing.csv",
+            archive_path=(
+                "landing-bucket/unl/inbound/Archive/GTLFYM_Policy_missing.csv"
+            ),
+            table_name="gtl_fym_policy",
+        )
+    ]
+    monkeypatch.setattr(cli, "run_pipeline", lambda **kwargs: "loaded")
+    monkeypatch.setattr(cli, "plan_landed_files_archive", lambda provider: archive_plan)
+
+    def fail_verification(expected_files, *, schema_name):
+        assert expected_files == [("gtl_fym_policy", "GTLFYM_Policy_missing.csv")]
+        assert schema_name == "raw"
+        raise RuntimeError("raw load verification failed")
+
+    monkeypatch.setattr(cli, "verify_raw_file_loads", fail_verification)
+    monkeypatch.setattr(
+        cli,
+        "_record_loaded_files",
+        lambda *args: (_ for _ in ()).throw(AssertionError("must not record loaded")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_refresh_typed_and_print",
+        lambda *args: (_ for _ in ()).throw(AssertionError("must not refresh typed")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "archive_landed_files",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not archive")),
+    )
+    monkeypatch.setattr(sys, "argv", ["dlt-pipeline", "load-s3", "gtl"])
+
+    try:
+        cli.main()
+    except RuntimeError as exc:
+        assert str(exc) == "raw load verification failed"
+    else:
+        raise AssertionError("Expected raw verification failure")
 
 
 def test_run_sftp_flow_exits_cleanly_when_no_files_moved(monkeypatch, capsys) -> None:

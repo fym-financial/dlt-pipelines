@@ -78,6 +78,7 @@ class TransferResult:
 class ArchivePlanItem:
     source_path: str
     archive_path: str
+    table_name: str
 
 
 @dataclass(frozen=True)
@@ -235,17 +236,28 @@ def plan_landed_files_archive(provider: str) -> list[ArchivePlanItem]:
             if fs.isdir(source_path):
                 continue
             archive_path = _archive_path_for(source_path)
-            plan.append(ArchivePlanItem(source_path=source_path, archive_path=archive_path))
+            plan.append(
+                ArchivePlanItem(
+                    source_path=source_path,
+                    archive_path=archive_path,
+                    table_name=route.table_name,
+                )
+            )
 
     return _dedupe_archive_plan(plan)
 
 
-def archive_landed_files(provider: str, *, progress: ProgressCallback | None = None) -> list[ArchivePlanItem]:
+def archive_landed_files(
+    provider: str,
+    *,
+    progress: ProgressCallback | None = None,
+    plan: list[ArchivePlanItem] | None = None,
+) -> list[ArchivePlanItem]:
     """Move landed B2/S3 files into Archive subdirectories after database load."""
     bucket_url = get_provider_s3_landing_bucket_url(provider)
     _report(progress, "Connecting to S3-compatible target for archiving.")
     fs, _ = fsspec.core.url_to_fs(bucket_url, **_s3_options_from_env())
-    plan = plan_landed_files_archive(provider)
+    plan = plan if plan is not None else plan_landed_files_archive(provider)
     _report(progress, f"Archive plan contains {len(plan)} file(s).")
 
     archived: list[ArchivePlanItem] = []
