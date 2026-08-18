@@ -205,6 +205,9 @@ def ahl_typed_refresh_statements() -> tuple[str, ...]:
         )""",
         # AHL at-risk derivation is intentionally disabled until the business rule is confirmed.
         "TRUNCATE TABLE typed.ahl_fym_policy_at_risk_episodes",
+        # The raw view selects p.*. Recreate it so newly discovered raw columns
+        # do not look like renames of the appended enrichment columns.
+        "DROP VIEW IF EXISTS raw.ahl_fym_policy_latest_load",
         _ahl_latest_load_view_statement("raw"),
         _ahl_latest_load_view_statement("typed"),
         "CREATE INDEX IF NOT EXISTS ahl_fym_policy_file_date_idx ON typed.ahl_fym_policy (file_date)",

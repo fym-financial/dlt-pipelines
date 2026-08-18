@@ -514,6 +514,16 @@ def test_ahl_typed_select_retains_source_fields_and_defers_tbd_rules() -> None:
     assert "false AS at_risk_policy" in select_sql
     assert "CREATE OR REPLACE VIEW raw.ahl_fym_policy_latest_load" in refresh_sql
     assert "CREATE OR REPLACE VIEW typed.ahl_fym_policy_latest_load" in refresh_sql
+    statements = ahl_typed_refresh_statements()
+    raw_view_drop_position = statements.index(
+        "DROP VIEW IF EXISTS raw.ahl_fym_policy_latest_load"
+    )
+    raw_view_create_position = next(
+        index
+        for index, statement in enumerate(statements)
+        if statement.startswith("CREATE OR REPLACE VIEW raw.ahl_fym_policy_latest_load")
+    )
+    assert raw_view_drop_position < raw_view_create_position
     assert "NULL::jsonb AS roster_hierarchy_json" in refresh_sql
     assert "TODO: add AHL roster hierarchy enrichment" in refresh_sql
     assert "TRUNCATE TABLE typed.ahl_fym_policy_at_risk_episodes" in refresh_sql
