@@ -3,6 +3,8 @@ from io import BytesIO
 import json
 from urllib.error import HTTPError
 
+from dlt.common.normalizers.naming.snake_case import NamingConvention
+
 from dlt_pipelines.db import (
     FileAuditEvent,
     _heartland_hnl_status_history_select,
@@ -526,6 +528,18 @@ def test_ahl_typed_select_retains_source_fields_and_defers_tbd_rules() -> None:
     )
     assert "p.fympolkey::text" in select_sql
     assert "p.fymstatcod::text" in select_sql
+    for digit_boundary_column in (
+        "fymrdr1_pla",
+        "fymrdr2_pla",
+        "fymrdr3_pla",
+        "fymrdr4_pla",
+        "fymrdr5_pla",
+        "fymmga1_no",
+        "fymmga1_nam",
+        "fymmga2_no",
+        "fymmga2_nam",
+    ):
+        assert f"p.{digit_boundary_column}::text" in select_sql
     assert "FYM_POL_(\\d{8})\\.csv$" in select_sql
     assert "paid_to_date_text <> '00000000'" in select_sql
     assert "_source_modified_at::date" in select_sql
@@ -546,6 +560,16 @@ def test_ahl_typed_select_retains_source_fields_and_defers_tbd_rules() -> None:
     assert "TODO: add AHL roster hierarchy enrichment" in refresh_sql
     assert "TRUNCATE TABLE typed.ahl_fym_policy_at_risk_episodes" in refresh_sql
     assert "ON CONFLICT (_dlt_id) DO NOTHING" in refresh_sql
+
+
+def test_ahl_typed_select_uses_dlt_normalized_source_column_names() -> None:
+    select_sql = ahl_fym_policy_typed_select()
+    route = _routes_for_provider("ahl")[0]
+    naming = NamingConvention()
+
+    for source_column in route.parser_options["expected_columns"]:
+        raw_column = naming.normalize_identifier(source_column)
+        assert f"p.{raw_column}::text" in select_sql
 
 
 def test_ahl_rebuild_cleanup_is_scoped_to_ahl_derived_objects() -> None:
