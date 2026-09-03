@@ -205,13 +205,29 @@ bucket URL. Run:
 infisical run --env=dev -- uv run dlt-pipeline load-s3 ahl
 ```
 
-CSV files directly under `ahl/inbound` load into `raw.ahl_fym_policy`, refresh
+Only files matching `ahl/inbound/FYM_POL_*.csv` load into
+`raw.ahl_fym_policy`. Their headers must exactly match the current 36-column
+AHL contract; a missing, extra, reordered, or legacy-format column aborts the
+load before PostgreSQL is changed. Successful loads refresh
 the separate `typed.ahl_fym_policy` history and latest-load objects, and then
 move to `ahl/inbound/Archive`. All AHL source fields are retained. The source
-object modification timestamp supplies `file_date`, and the DLT load timestamp
-is used only as a fallback. `at_risk_policy` is currently always false. Roster
-hierarchy enrichment is intentionally left as a TODO until the AHL hierarchy
-mapping is defined.
+filename date supplies `file_date`, with the object modification timestamp and
+DLT load timestamp used as fallbacks. `at_risk_policy` is currently always
+false. Roster hierarchy enrichment is intentionally left as a TODO until the
+AHL hierarchy mapping is defined.
+
+For the one-time recovery from mixed legacy formats, first preserve a database
+backup and ensure only validated `FYM_POL_*.csv` files are in `ahl/inbound`, then
+run:
+
+```bash
+infisical run --env=dev -- uv run dlt-pipeline load-s3 ahl --rebuild-ahl
+```
+
+This explicitly drops only the AHL typed objects, asks DLT to drop and recreate
+the `ahl_fym_policy` raw resource and its schema/resource state, reloads the
+landed file(s), verifies the raw rows, rebuilds typed objects, and archives the
+input. File-audit history is retained for incident traceability.
 
 ## Manhattan S3 Flow
 

@@ -12,6 +12,7 @@ from dlt_pipelines.db import (
     _unl_fym_policy_typed_select,
     check_unl_fym_policy_loaded,
     check_postgres_connection,
+    prepare_ahl_rebuild,
     record_file_events,
     refresh_typed_dataset,
     verify_raw_file_loads,
@@ -26,6 +27,7 @@ from dlt_pipelines.pipelines.typed import run_unl_fym_policy_typed_pipeline
 from dlt_pipelines.pipelines.ahl import (
     AHL_TYPED_POLICY_COLUMNS,
     ahl_fym_policy_typed_select,
+    ahl_rebuild_cleanup_statements,
     ahl_typed_refresh_statements,
 )
 from dlt_pipelines.pipelines.manhattan import (
@@ -399,14 +401,24 @@ def test_gtl_uses_unl_landing_bucket(monkeypatch) -> None:
 
 
 def test_ahl_route_accepts_csv_files_directly_under_inbound() -> None:
-    assert _routes_for_provider("ahl") == [
-        FileRoute(
-            name="fym_policy",
-            file_glob="ahl/inbound/*.csv",
-            parser="csv",
-            table_name="ahl_fym_policy",
-            parser_options={"dtype": "string", "keep_default_na": False},
-        )
+    routes = _routes_for_provider("ahl")
+
+    assert len(routes) == 1
+    route = routes[0]
+    assert route.name == "fym_policy"
+    assert route.file_glob == "ahl/inbound/FYM_POL_*.csv"
+    assert route.parser == "csv"
+    assert route.table_name == "ahl_fym_policy"
+    assert route.parser_options["dtype"] == "string"
+    assert route.parser_options["keep_default_na"] is False
+    assert route.parser_options["expected_columns"] == [
+        "FYMPOLKEY", "FYMKEY", "FYMFNAME", "FYMLNAME", "FYMDOB", "FYMPHONE",
+        "FYMZIP", "FYMEMAIL", "FYMRESSTAT", "FYMISSSTAT", "FYMISSAGE",
+        "FYMBASEPLA", "FYMRDR1PLA", "FYMRDR2PLA", "FYMRDR3PLA", "FYMRDR4PLA",
+        "FYMRDR5PLA", "FYMISSDATE", "FYMAPPDATE", "FYMPDTODAT", "FYMANNPREM",
+        "FYMBILLMOD", "FYMBILLFOR", "FYMSTATCOD", "FYMSTATDAT", "FYMSTATRSN",
+        "FYMTERMDAT", "FYMATRISK", "FYMWRAGNO", "FYMWRAGNAM", "FYMGANO",
+        "FYMGANAME", "FYMMGA1NO", "FYMMGA1NAM", "FYMMGA2NO", "FYMMGA2NAM",
     ]
 
 
@@ -493,9 +505,10 @@ def test_ahl_typed_select_retains_source_fields_and_defers_tbd_rules() -> None:
     select_sql = ahl_fym_policy_typed_select()
     refresh_sql = "\n".join(ahl_typed_refresh_statements())
 
-    assert len(AHL_TYPED_POLICY_COLUMNS) == 43
+    assert len(AHL_TYPED_POLICY_COLUMNS) == 44
     for column in (
         "date_of_birth",
+        "fym_key",
         "email",
         "resident_state",
         "rider_1_plan_code",
@@ -508,9 +521,13 @@ def test_ahl_typed_select_retains_source_fields_and_defers_tbd_rules() -> None:
         assert column in AHL_TYPED_POLICY_COLUMNS
     assert "FROM raw.ahl_fym_policy AS p" in select_sql
     assert (
-        "ALTER TABLE raw.ahl_fym_policy ADD COLUMN IF NOT EXISTS at_risk text"
+        "ALTER TABLE raw.ahl_fym_policy ADD COLUMN IF NOT EXISTS fymatrisk text"
         in refresh_sql
     )
+    assert "p.fympolkey::text" in select_sql
+    assert "p.fymstatcod::text" in select_sql
+    assert "FYM_POL_(\\d{8})\\.csv$" in select_sql
+    assert "paid_to_date_text <> '00000000'" in select_sql
     assert "_source_modified_at::date" in select_sql
     assert "false AS at_risk_policy" in select_sql
     assert "CREATE OR REPLACE VIEW raw.ahl_fym_policy_latest_load" in refresh_sql
@@ -529,6 +546,20 @@ def test_ahl_typed_select_retains_source_fields_and_defers_tbd_rules() -> None:
     assert "TODO: add AHL roster hierarchy enrichment" in refresh_sql
     assert "TRUNCATE TABLE typed.ahl_fym_policy_at_risk_episodes" in refresh_sql
     assert "ON CONFLICT (_dlt_id) DO NOTHING" in refresh_sql
+
+
+def test_ahl_rebuild_cleanup_is_scoped_to_ahl_derived_objects() -> None:
+    cleanup_sql = "\n".join(ahl_rebuild_cleanup_statements())
+
+    assert "typed.ahl_fym_policy_latest_load" in cleanup_sql
+    assert "raw.ahl_fym_policy_latest_load" in cleanup_sql
+    assert "typed.ahl_fym_policy_change_history" in cleanup_sql
+    assert "typed.ahl_fym_policy_at_risk_episodes" in cleanup_sql
+    assert "typed.ahl_fym_policy" in cleanup_sql
+    assert "raw.ahl_fym_policy" not in cleanup_sql.replace(
+        "raw.ahl_fym_policy_latest_load", ""
+    )
+    assert "CASCADE" not in cleanup_sql
 
 
 def test_csv_reader_attaches_source_modification_timestamp() -> None:
@@ -570,6 +601,28 @@ def test_csv_reader_raises_instead_of_skipping_malformed_file() -> None:
         raise AssertionError("Expected malformed CSV input to abort the load")
 
 
+def test_csv_reader_rejects_columns_outside_configured_contract() -> None:
+    class FakeFile(dict):
+        def open(self) -> BytesIO:
+            return BytesIO(b"FYMPOLKEY,unexpected\n8002016,value\n")
+
+    file_item = FakeFile(file_name="FYM_POL_20260901.csv", modification_date=None)
+
+    try:
+        list(
+            s3._read_csv_with_file_errors(
+                iter([file_item]),
+                dtype="string",
+                expected_columns=["FYMPOLKEY", "FYMKEY"],
+            )
+        )
+    except RuntimeError as exc:
+        assert "CSV columns do not match the configured contract" in str(exc)
+        assert "expected 2, got 2" in str(exc)
+    else:
+        raise AssertionError("Expected an unexpected CSV header to abort the load")
+
+
 def test_refresh_typed_dataset_supports_ahl_without_roster_refresh(monkeypatch) -> None:
     calls: dict[str, object] = {"statements": []}
 
@@ -609,6 +662,80 @@ def test_refresh_typed_dataset_supports_ahl_without_roster_refresh(monkeypatch) 
     assert result.row_count == 1921
     assert "raw_roster" not in executed_sql
     assert calls["committed"] is True
+    assert calls["closed"] is True
+
+
+def test_prepare_ahl_rebuild_executes_scoped_cleanup_in_transaction(monkeypatch) -> None:
+    calls: dict[str, object] = {"statements": []}
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, statement: str) -> None:
+            calls["statements"].append(statement)
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            calls["committed"] = True
+
+        def rollback(self) -> None:
+            calls["rolled_back"] = True
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+
+    prepare_ahl_rebuild()
+
+    assert calls["statements"] == list(ahl_rebuild_cleanup_statements())
+    assert calls["committed"] is True
+    assert calls["closed"] is True
+
+
+def test_prepare_ahl_rebuild_rolls_back_when_cleanup_fails(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, statement: str) -> None:
+            raise RuntimeError("dependent object blocks cleanup")
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            raise AssertionError("must not commit a partial cleanup")
+
+        def rollback(self) -> None:
+            calls["rolled_back"] = True
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    monkeypatch.setattr("dlt_pipelines.db._connect", lambda: FakeConnection())
+
+    try:
+        prepare_ahl_rebuild()
+    except RuntimeError as exc:
+        assert str(exc) == "dependent object blocks cleanup"
+    else:
+        raise AssertionError("Expected cleanup failure")
+
+    assert calls["rolled_back"] is True
     assert calls["closed"] is True
 
 
@@ -1650,8 +1777,8 @@ def test_archive_landed_files_moves_to_archive_subdirectory(monkeypatch) -> None
 def test_ahl_archive_plan_only_matches_direct_inbound_csv_files(monkeypatch) -> None:
     class FakeS3Fs:
         def glob(self, pattern: str) -> list[str]:
-            assert pattern == "landing-bucket/ahl/inbound/*.csv"
-            return ["landing-bucket/ahl/inbound/FYM Policy Data 8_6_26.csv"]
+            assert pattern == "landing-bucket/ahl/inbound/FYM_POL_*.csv"
+            return ["landing-bucket/ahl/inbound/FYM_POL_20260901.csv"]
 
         def isdir(self, path: str) -> bool:
             return False
@@ -1667,9 +1794,9 @@ def test_ahl_archive_plan_only_matches_direct_inbound_csv_files(monkeypatch) -> 
 
     assert plan_landed_files_archive("ahl") == [
         ArchivePlanItem(
-            source_path="landing-bucket/ahl/inbound/FYM Policy Data 8_6_26.csv",
+            source_path="landing-bucket/ahl/inbound/FYM_POL_20260901.csv",
             archive_path=(
-                "landing-bucket/ahl/inbound/Archive/FYM Policy Data 8_6_26.csv"
+                "landing-bucket/ahl/inbound/Archive/FYM_POL_20260901.csv"
             ),
             table_name="ahl_fym_policy",
         )

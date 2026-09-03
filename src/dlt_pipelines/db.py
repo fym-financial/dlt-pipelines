@@ -431,6 +431,23 @@ def refresh_typed_dataset(provider: str) -> TypedRefreshResult:
     )
 
 
+def prepare_ahl_rebuild() -> None:
+    """Drop AHL-derived objects so DLT can replace the raw AHL resource cleanly."""
+    from dlt_pipelines.pipelines.ahl import ahl_rebuild_cleanup_statements
+
+    connection = _connect()
+    try:
+        with connection.cursor() as cursor:
+            for statement in ahl_rebuild_cleanup_statements():
+                cursor.execute(statement)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def _refresh_gtl_typed_dataset() -> TypedRefreshResult:
     """Append GTL policy rows and rebuild its carrier-specific typed objects."""
     from dlt_pipelines.pipelines.gtl import gtl_typed_refresh_statements

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 AHL_TYPED_POLICY_COLUMNS = (
     "policy_number",
+    "fym_key",
     "first_name",
     "last_name",
     "date_of_birth",
@@ -55,41 +56,42 @@ def ahl_fym_policy_typed_select() -> str:
     return r"""
 WITH source_rows AS (
     SELECT
-        nullif(trim(p.policy_number::text), '') AS policy_number,
-        nullif(trim(p.first_name::text), '') AS first_name,
-        nullif(trim(p.last_name::text), '') AS last_name,
-        nullif(trim(p.date_of_birth::text), '') AS date_of_birth_text,
-        nullif(trim(p.phone::text), '') AS phone,
-        nullif(trim(p.zip::text), '') AS zip,
-        nullif(trim(p.email::text), '') AS email,
-        nullif(trim(p.resident_state::text), '') AS resident_state,
-        nullif(trim(p.issue_state::text), '') AS issue_state,
-        nullif(trim(p.issue_age::text), '') AS issue_age_text,
-        nullif(trim(p.base_plan_code::text), '') AS base_plan_code,
-        nullif(trim(p.rider_1_plan_code::text), '') AS rider_1_plan_code,
-        nullif(trim(p.rider_2_plan_code::text), '') AS rider_2_plan_code,
-        nullif(trim(p.rider_3_plan_code::text), '') AS rider_3_plan_code,
-        nullif(trim(p.rider_4_plan_code::text), '') AS rider_4_plan_code,
-        nullif(trim(p.rider_5_plan_code::text), '') AS rider_5_plan_code,
-        nullif(trim(p.issue_date::text), '') AS issue_date_text,
-        nullif(trim(p.app_received_date::text), '') AS app_received_date_text,
-        nullif(trim(p.paid_to_date::text), '') AS paid_to_date_text,
-        nullif(trim(p.annual_premium::text), '') AS annual_premium_text,
-        nullif(trim(p.billing_mode::text), '') AS billing_mode_text,
-        nullif(trim(p.billing_form::text), '') AS billing_form,
-        nullif(trim(p.contract_code::text), '') AS contract_code,
-        nullif(trim(p.contract_date::text), '') AS contract_date_text,
-        nullif(trim(p.contract_reason::text), '') AS contract_reason,
-        nullif(trim(p.term_date::text), '') AS term_date_text,
-        nullif(trim(p.at_risk::text), '') AS at_risk,
-        nullif(trim(p.writing_agent_number::text), '') AS writing_agent_number,
-        nullif(trim(p.writing_agent_name::text), '') AS writing_agent_name,
-        nullif(trim(p.ga_number::text), '') AS ga_number,
-        nullif(trim(p.ga_name::text), '') AS ga_name,
-        nullif(trim(p.mga_1_number::text), '') AS mga_1_number,
-        nullif(trim(p.mga_1_name::text), '') AS mga_1_name,
-        nullif(trim(p.mga_2_number::text), '') AS mga_2_number,
-        nullif(trim(p.mga_2_name::text), '') AS mga_2_name,
+        nullif(trim(p.fympolkey::text), '') AS policy_number,
+        nullif(trim(p.fymkey::text), '') AS fym_key,
+        nullif(trim(p.fymfname::text), '') AS first_name,
+        nullif(trim(p.fymlname::text), '') AS last_name,
+        nullif(trim(p.fymdob::text), '') AS date_of_birth_text,
+        nullif(trim(p.fymphone::text), '') AS phone,
+        nullif(trim(p.fymzip::text), '') AS zip,
+        nullif(trim(p.fymemail::text), '') AS email,
+        nullif(trim(p.fymresstat::text), '') AS resident_state,
+        nullif(trim(p.fymissstat::text), '') AS issue_state,
+        nullif(trim(p.fymissage::text), '') AS issue_age_text,
+        nullif(trim(p.fymbasepla::text), '') AS base_plan_code,
+        nullif(trim(p.fymrdr1pla::text), '') AS rider_1_plan_code,
+        nullif(trim(p.fymrdr2pla::text), '') AS rider_2_plan_code,
+        nullif(trim(p.fymrdr3pla::text), '') AS rider_3_plan_code,
+        nullif(trim(p.fymrdr4pla::text), '') AS rider_4_plan_code,
+        nullif(trim(p.fymrdr5pla::text), '') AS rider_5_plan_code,
+        nullif(trim(p.fymissdate::text), '') AS issue_date_text,
+        nullif(trim(p.fymappdate::text), '') AS app_received_date_text,
+        nullif(trim(p.fympdtodat::text), '') AS paid_to_date_text,
+        nullif(trim(p.fymannprem::text), '') AS annual_premium_text,
+        nullif(trim(p.fymbillmod::text), '') AS billing_mode_text,
+        nullif(trim(p.fymbillfor::text), '') AS billing_form,
+        nullif(trim(p.fymstatcod::text), '') AS contract_code,
+        nullif(trim(p.fymstatdat::text), '') AS contract_date_text,
+        nullif(trim(p.fymstatrsn::text), '') AS contract_reason,
+        nullif(trim(p.fymtermdat::text), '') AS term_date_text,
+        nullif(trim(p.fymatrisk::text), '') AS at_risk,
+        nullif(trim(p.fymwragno::text), '') AS writing_agent_number,
+        nullif(trim(p.fymwragnam::text), '') AS writing_agent_name,
+        nullif(trim(p.fymgano::text), '') AS ga_number,
+        nullif(trim(p.fymganame::text), '') AS ga_name,
+        nullif(trim(p.fymmga1no::text), '') AS mga_1_number,
+        nullif(trim(p.fymmga1nam::text), '') AS mga_1_name,
+        nullif(trim(p.fymmga2no::text), '') AS mga_2_number,
+        nullif(trim(p.fymmga2nam::text), '') AS mga_2_name,
         p._source_file::text AS _source_file,
         p._source_modified_at::timestamptz AS _source_modified_at,
         p._dlt_load_id::text AS raw_dlt_load_id,
@@ -101,9 +103,10 @@ WITH source_rows AS (
 typed_rows AS (
     SELECT
         policy_number,
+        fym_key,
         first_name,
         last_name,
-        CASE WHEN date_of_birth_text ~ '^\d{8}$'
+        CASE WHEN date_of_birth_text ~ '^\d{8}$' AND date_of_birth_text <> '00000000'
               AND to_char(to_date(date_of_birth_text, 'YYYYMMDD'), 'YYYYMMDD') = date_of_birth_text
              THEN to_date(date_of_birth_text, 'YYYYMMDD') END AS date_of_birth,
         phone,
@@ -118,13 +121,13 @@ typed_rows AS (
         rider_3_plan_code,
         rider_4_plan_code,
         rider_5_plan_code,
-        CASE WHEN issue_date_text ~ '^\d{8}$'
+        CASE WHEN issue_date_text ~ '^\d{8}$' AND issue_date_text <> '00000000'
               AND to_char(to_date(issue_date_text, 'YYYYMMDD'), 'YYYYMMDD') = issue_date_text
              THEN to_date(issue_date_text, 'YYYYMMDD') END AS issue_date,
-        CASE WHEN app_received_date_text ~ '^\d{8}$'
+        CASE WHEN app_received_date_text ~ '^\d{8}$' AND app_received_date_text <> '00000000'
               AND to_char(to_date(app_received_date_text, 'YYYYMMDD'), 'YYYYMMDD') = app_received_date_text
              THEN to_date(app_received_date_text, 'YYYYMMDD') END AS app_received_date,
-        CASE WHEN paid_to_date_text ~ '^\d{8}$'
+        CASE WHEN paid_to_date_text ~ '^\d{8}$' AND paid_to_date_text <> '00000000'
               AND to_char(to_date(paid_to_date_text, 'YYYYMMDD'), 'YYYYMMDD') = paid_to_date_text
              THEN to_date(paid_to_date_text, 'YYYYMMDD') END AS paid_to_date,
         CASE WHEN annual_premium_text ~ '^[+-]?\d+(\.\d+)?$'
@@ -132,11 +135,11 @@ typed_rows AS (
         CASE WHEN billing_mode_text ~ '^\d+$' THEN billing_mode_text::integer END AS billing_mode,
         billing_form,
         contract_code,
-        CASE WHEN contract_date_text ~ '^\d{8}$'
+        CASE WHEN contract_date_text ~ '^\d{8}$' AND contract_date_text <> '00000000'
               AND to_char(to_date(contract_date_text, 'YYYYMMDD'), 'YYYYMMDD') = contract_date_text
              THEN to_date(contract_date_text, 'YYYYMMDD') END AS contract_date,
         contract_reason,
-        CASE WHEN term_date_text ~ '^\d{8}$'
+        CASE WHEN term_date_text ~ '^\d{8}$' AND term_date_text <> '00000000'
               AND to_char(to_date(term_date_text, 'YYYYMMDD'), 'YYYYMMDD') = term_date_text
              THEN to_date(term_date_text, 'YYYYMMDD') END AS term_date,
         at_risk,
@@ -151,6 +154,8 @@ typed_rows AS (
         _source_file,
         _source_modified_at,
         coalesce(
+            CASE WHEN _source_file ~ 'FYM_POL_\d{8}\.csv$'
+                 THEN to_date(substring(_source_file FROM 'FYM_POL_(\d{8})\.csv$'), 'YYYYMMDD') END,
             _source_modified_at::date,
             CASE WHEN raw_dlt_load_id ~ '^\d+(\.\d+)?$'
                  THEN to_timestamp(raw_dlt_load_id::double precision)::date END
@@ -166,14 +171,25 @@ SELECT * FROM typed_rows
 """
 
 
+def ahl_rebuild_cleanup_statements() -> tuple[str, ...]:
+    """Remove only AHL-derived objects before DLT replaces the raw resource."""
+    return (
+        "DROP VIEW IF EXISTS typed.ahl_fym_policy_latest_load",
+        "DROP VIEW IF EXISTS raw.ahl_fym_policy_latest_load",
+        "DROP TABLE IF EXISTS typed.ahl_fym_policy_change_history",
+        "DROP TABLE IF EXISTS typed.ahl_fym_policy_at_risk_episodes",
+        "DROP TABLE IF EXISTS typed.ahl_fym_policy",
+    )
+
+
 def ahl_typed_refresh_statements() -> tuple[str, ...]:
     typed_select = ahl_fym_policy_typed_select()
     columns = ", ".join(AHL_TYPED_POLICY_COLUMNS)
     return (
         "CREATE SCHEMA IF NOT EXISTS typed",
-        # DLT may omit an all-null CSV column. The current AHL sample has no
-        # populated At Risk values, so guarantee the retained raw field exists.
-        "ALTER TABLE raw.ahl_fym_policy ADD COLUMN IF NOT EXISTS at_risk text",
+        # DLT may omit an all-null CSV column. The replacement AHL sample has no
+        # populated FYMATRISK values, so guarantee the retained raw field exists.
+        "ALTER TABLE raw.ahl_fym_policy ADD COLUMN IF NOT EXISTS fymatrisk text",
         f"CREATE TABLE IF NOT EXISTS typed.ahl_fym_policy AS {typed_select} WITH NO DATA",
         (
             "CREATE UNIQUE INDEX IF NOT EXISTS ahl_fym_policy_typed_dlt_id_idx "

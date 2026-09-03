@@ -10,10 +10,10 @@ parallelism_strategy = "sequential"
 
 [[sftp_providers.ahl.routes]]
 name = "fym_policy"
-file_glob = "ahl/inbound/*.csv"
+file_glob = "ahl/inbound/FYM_POL_*.csv"
 parser = "csv"
 table_name = "ahl_fym_policy"
-parser_options = { dtype = "string", keep_default_na = false }
+parser_options = { dtype = "string", keep_default_na = false, expected_columns = ["FYMPOLKEY", "FYMKEY", "FYMFNAME", "FYMLNAME", "FYMDOB", "FYMPHONE", "FYMZIP", "FYMEMAIL", "FYMRESSTAT", "FYMISSSTAT", "FYMISSAGE", "FYMBASEPLA", "FYMRDR1PLA", "FYMRDR2PLA", "FYMRDR3PLA", "FYMRDR4PLA", "FYMRDR5PLA", "FYMISSDATE", "FYMAPPDATE", "FYMPDTODAT", "FYMANNPREM", "FYMBILLMOD", "FYMBILLFOR", "FYMSTATCOD", "FYMSTATDAT", "FYMSTATRSN", "FYMTERMDAT", "FYMATRISK", "FYMWRAGNO", "FYMWRAGNAM", "FYMGANO", "FYMGANAME", "FYMMGA1NO", "FYMMGA1NAM", "FYMMGA2NO", "FYMMGA2NAM"] }
 
 [[sftp_providers.manhattan.routes]]
 name = "policy"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Literal
 
 import dlt
 
@@ -39,6 +40,7 @@ def run_pipeline(
     provider: str | None = None,
     dataset_name: str = "raw",
     pipeline_name: str = "dlt_pipelines",
+    refresh: Literal["drop_sources", "drop_resources", "drop_data"] | None = None,
 ) -> object:
     try:
         source_factory = SOURCE_FACTORIES[source_name]
@@ -50,4 +52,4 @@ def run_pipeline(
         pipeline_name=pipeline_name,
         dataset_name=dataset_name,
     )
-    return pipeline.run(source_factory(provider))
+    return pipeline.run(source_factory(provider), refresh=refresh)

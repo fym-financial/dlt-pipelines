@@ -157,6 +157,86 @@ def test_load_s3_no_refresh_typed_flag_skips_refresh(monkeypatch, capsys) -> Non
     assert "loaded" in captured.out
 
 
+def test_load_s3_rebuilds_only_ahl_with_dlt_resource_reset(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        cli,
+        "prepare_ahl_rebuild",
+        lambda: calls.update(prepared=True),
+    )
+    monkeypatch.setattr(
+        cli,
+        "validate_landed_csv_contracts",
+        lambda provider: calls.update(validated=provider) or 1,
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_pipeline",
+        lambda **kwargs: calls.update(load=kwargs) or "loaded",
+    )
+    monkeypatch.setattr(cli, "plan_landed_files_archive", lambda provider: [])
+    monkeypatch.setattr(cli, "_record_loaded_files", lambda provider, plan: None)
+    monkeypatch.setattr(cli, "_refresh_typed_and_print", lambda provider: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dlt-pipeline", "load-s3", "ahl", "--rebuild-ahl", "--no-archive"],
+    )
+
+    cli.main()
+
+    assert calls["prepared"] is True
+    assert calls["validated"] == "ahl"
+    assert calls["load"] == {
+        "source_name": "s3",
+        "provider": "ahl",
+        "dataset_name": "raw",
+        "pipeline_name": "dlt_pipelines",
+        "refresh": "drop_resources",
+    }
+
+
+def test_load_s3_rejects_ahl_rebuild_for_other_provider(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dlt-pipeline", "load-s3", "unl", "--rebuild-ahl"],
+    )
+
+    try:
+        cli.main()
+    except RuntimeError as exc:
+        assert str(exc) == "--rebuild-ahl is valid only for provider 'ahl'."
+    else:
+        raise AssertionError("Expected a non-AHL rebuild to be rejected")
+
+
+def test_load_s3_does_not_drop_ahl_objects_when_preflight_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "validate_landed_csv_contracts",
+        lambda provider: (_ for _ in ()).throw(RuntimeError("invalid AHL header")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "prepare_ahl_rebuild",
+        lambda: (_ for _ in ()).throw(AssertionError("must not drop AHL objects")),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dlt-pipeline", "load-s3", "ahl", "--rebuild-ahl"],
+    )
+
+    try:
+        cli.main()
+    except RuntimeError as exc:
+        assert str(exc) == "invalid AHL header"
+    else:
+        raise AssertionError("Expected AHL preflight failure")
+
+
 def test_load_s3_does_not_audit_refresh_or_archive_unverified_file(
     monkeypatch,
 ) -> None:

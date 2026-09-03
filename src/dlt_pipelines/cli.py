@@ -10,11 +10,13 @@ from dlt_pipelines.db import (
     FileAuditEvent,
     check_unl_fym_policy_loaded,
     check_postgres_connection,
+    prepare_ahl_rebuild,
     record_file_events,
     refresh_typed_dataset,
     verify_raw_file_loads,
 )
 from dlt_pipelines.pipelines.load import SOURCE_CHOICES, run_pipeline
+from dlt_pipelines.sources.s3 import validate_landed_csv_contracts
 from dlt_pipelines.transfers import (
     archive_landed_files,
     describe_sftp_scan,
@@ -136,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip refreshing the provider's typed PostgreSQL tables after a successful raw load.",
     )
+    load_s3_parser.add_argument(
+        "--rebuild-ahl",
+        action="store_true",
+        help=(
+            "Destructively replace AHL raw data and DLT resource state, then rebuild "
+            "AHL typed objects. Valid only with provider ahl."
+        ),
+    )
 
     archive_parser = subparsers.add_parser(
         "archive-s3",
@@ -227,12 +237,30 @@ def main() -> None:
         return
 
     if args.command == "load-s3":
-        load_info = run_pipeline(
-            source_name="s3",
-            provider=args.provider,
-            dataset_name=args.dataset,
-            pipeline_name=args.pipeline_name,
-        )
+        if args.rebuild_ahl and args.provider != "ahl":
+            raise RuntimeError("--rebuild-ahl is valid only for provider 'ahl'.")
+        if args.rebuild_ahl and args.no_refresh_typed:
+            raise RuntimeError("--rebuild-ahl cannot be combined with --no-refresh-typed.")
+        if args.rebuild_ahl:
+            validated_files = validate_landed_csv_contracts("ahl")
+            print(f"Validated {validated_files} landed AHL file contract(s).")
+            prepare_ahl_rebuild()
+
+        if args.rebuild_ahl:
+            load_info = run_pipeline(
+                source_name="s3",
+                provider=args.provider,
+                dataset_name=args.dataset,
+                pipeline_name=args.pipeline_name,
+                refresh="drop_resources",
+            )
+        else:
+            load_info = run_pipeline(
+                source_name="s3",
+                provider=args.provider,
+                dataset_name=args.dataset,
+                pipeline_name=args.pipeline_name,
+            )
         print(load_info)
         archive_plan = plan_landed_files_archive(args.provider)
         _verify_raw_loads(archive_plan, schema_name=args.dataset)

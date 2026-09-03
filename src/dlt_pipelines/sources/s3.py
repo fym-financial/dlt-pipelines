@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import posixpath
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -78,6 +78,40 @@ def _routes_with_matches(bucket_url: str, routes: list[FileRoute]) -> list[FileR
             matching_routes.append(route)
 
     return matching_routes
+
+
+def validate_landed_csv_contracts(provider: str) -> int:
+    """Validate configured CSV headers before a destructive provider rebuild."""
+    bucket_url = get_provider_s3_landing_bucket_url(provider)
+    routes = _routes_for_provider(provider)
+    _ensure_aws_environment()
+    fs, bucket_root = fsspec.core.url_to_fs(bucket_url, **s3_options_from_env())
+    bucket_root = bucket_root.rstrip("/")
+    validated_files = 0
+
+    for route in routes:
+        expected_columns = route.parser_options.get("expected_columns")
+        if route.parser != "csv" or expected_columns is None:
+            continue
+        if not isinstance(expected_columns, (list, tuple)):
+            raise RuntimeError(f"Route '{route.name}' expected_columns must be a list.")
+        pattern = posixpath.join(bucket_root, route.file_glob)
+        for path in fs.glob(pattern):
+            if fs.isdir(path):
+                continue
+            with fs.open(path, "rb") as file:
+                _validate_csv_columns(
+                    file,
+                    expected_columns=expected_columns,
+                    file_name=posixpath.basename(path),
+                )
+            validated_files += 1
+
+    if validated_files == 0:
+        raise RuntimeError(
+            f"No landed CSV files with configured column contracts matched provider '{provider}'."
+        )
+    return validated_files
 
 
 def _routes_for_provider(provider: str) -> list[FileRoute]:
@@ -201,14 +235,21 @@ def _copy_env_if_present(source_name: str, target_name: str) -> None:
 def read_csv_with_file_errors(
     items: Iterator[FileItemDict],
     chunksize: int = 10000,
+    expected_columns: list[str] | tuple[str, ...] | None = None,
     **pandas_kwargs: Any,
 ) -> Iterator[TDataItems]:
-    yield from _read_csv_with_file_errors(items, chunksize=chunksize, **pandas_kwargs)
+    yield from _read_csv_with_file_errors(
+        items,
+        chunksize=chunksize,
+        expected_columns=expected_columns,
+        **pandas_kwargs,
+    )
 
 
 def _read_csv_with_file_errors(
     items: Iterator[FileItemDict],
     chunksize: int = 10000,
+    expected_columns: list[str] | tuple[str, ...] | None = None,
     **pandas_kwargs: Any,
 ) -> Iterator[TDataItems]:
     import pandas as pd
@@ -220,8 +261,35 @@ def _read_csv_with_file_errors(
         try:
             with file_obj.open() as file:
                 for df in pd.read_csv(file, **kwargs):
+                    if expected_columns is not None:
+                        _validate_column_names(
+                            df.columns,
+                            expected_columns=expected_columns,
+                            file_name=file_name,
+                        )
                     df["_source_file"] = file_name
                     df["_source_modified_at"] = source_modified_at
                     yield df.to_dict(orient="records")
         except Exception as exc:
             raise RuntimeError(f"Failed to read CSV file {file_name}: {exc}") from exc
+
+
+def _validate_csv_columns(
+    file, *, expected_columns: Sequence[str], file_name: str
+) -> None:
+    import pandas as pd
+
+    columns = pd.read_csv(file, nrows=0).columns
+    _validate_column_names(columns, expected_columns=expected_columns, file_name=file_name)
+
+
+def _validate_column_names(
+    columns, *, expected_columns: Sequence[str], file_name: str
+) -> None:
+    expected = list(expected_columns)
+    actual = list(columns)
+    if actual != expected:
+        raise ValueError(
+            f"CSV columns do not match the configured contract for {file_name} "
+            f"(expected {len(expected)}, got {len(actual)})"
+        )
